@@ -1,0 +1,74 @@
+<!--
+  Notificações (baseado na tela "Notificação" do print).
+  Diferente do print original: aqui o botão "Excluir todas notificações"
+  fica no FINAL da lista (o print mostrava no topo) - foi um pedido seu.
+-->
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>notificacoes</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Notificações" data-sem-editar="true" data-pagina="perfil">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <!-- Lista populada dinamicamente via loop JS a partir da tabela notificacoes -->
+            <div id="lista-notificacoes"></div>
+
+            <button class="btn-perigo" onclick="excluirTodasNotificacoes()">Excluir todas notificações</button>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script>
+        // Loop de renderização dinâmica para exibir notificações
+        async function carregarNotificacoes() {
+            const container = document.getElementById("lista-notificacoes");
+            const usuarioSalvo = localStorage.getItem("usuario");
+            const usuarioObj = usuarioSalvo ? JSON.parse(usuarioSalvo) : null;
+            const idUsuario = usuarioObj ? usuarioObj.id : 1;
+
+            try {
+                const notificacoes = await buscarNotificacoes(idUsuario);
+                if (!notificacoes || notificacoes.length === 0) {
+                    container.innerHTML = '<p style="text-align:center; color:#999; margin-top:20px;">Sem Notificações</p>';
+                    return;
+                }
+
+                container.innerHTML = "";
+                notificacoes.forEach((n) => {
+                    const item = document.createElement("div");
+                    item.className = "item-notificacao";
+                    item.innerHTML = `
+                        <span class="avatar-circulo">👤</span>
+                        <div style="flex:1;">
+                            <strong>${n.titulo || "Notificação"}</strong>
+                            <div style="font-size:0.85rem; color:#555;">${n.mensagem}</div>
+                        </div>
+                        <button class="btn-excluir-x" onclick="this.closest('.item-notificacao').remove()">✕</button>
+                    `;
+                    container.appendChild(item);
+                });
+            } catch (erro) {
+                container.innerHTML = `<p style="color:red; text-align:center;">Erro ao carregar notificações.</p>`;
+            }
+        }
+
+        function excluirTodasNotificacoes() {
+            document.getElementById("lista-notificacoes").innerHTML =
+                '<p style="text-align:center; color:#999; margin-top:20px;">Sem Notificações</p>';
+        }
+
+        // A lista dinâmica é carregada por js/notificacoes.js.
+    </script>
+    <script src="js/notificacoes.js"></script>
+</body>
+</html>

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutonoMe - Inicial</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="default" data-pagina="homepage">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <section class="hero-section">
+                <div class="hero-content">
+                    <h1>Encontre os Melhores Profissionais Autônomos</h1>
+                    <p>Conecte-se com especialistas qualificados para serviços de Casa e Trabalho Manual com praticidade e rapidez.</p>
+                </div>
+            </section>
+
+            <section>
+                <h2 class="titulo-secao">Categorias &amp; Profissões</h2>
+                <div id="grid-categorias" class="categorias-grid" aria-live="polite" aria-busy="true"></div>
+            </section>
+
+            <section class="secao-profissionais">
+                <h2 class="titulo-secao">Profissionais em destaque</h2>
+                <div id="grid-profissionais" class="profissionais-grid" aria-live="polite" aria-busy="true"></div>
+            </section>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script>
+        function mostrarEstado(container, mensagem, tipo, tentarNovamente) {
+            container.replaceChildren();
+            container.setAttribute("aria-busy", String(tipo === "carregando"));
+
+            const estado = document.createElement("p");
+            estado.className = `estado-lista estado-lista--${tipo}`;
+            estado.setAttribute("role", tipo === "erro" ? "alert" : "status");
+            if (tipo === "carregando") {
+                const spinner = document.createElement("span");
+                spinner.className = "loading-spinner";
+                spinner.setAttribute("aria-hidden", "true");
+                estado.appendChild(spinner);
+            }
+            estado.appendChild(document.createTextNode(mensagem));
+            container.appendChild(estado);
+
+            if (tentarNovamente) {
+                const botao = document.createElement("button");
+                botao.type = "button";
+                botao.className = "btn-tentar-novamente";
+                botao.textContent = "Tentar novamente";
+                botao.addEventListener("click", tentarNovamente, { once: true });
+                container.appendChild(botao);
+            }
+        }
+
+        async function carregarCategorias() {
+            const grid = document.getElementById("grid-categorias");
+            mostrarEstado(grid, "Carregando categorias e profissões...", "carregando");
+            try {
+                const categorias = await buscarCategorias();
+                if (!Array.isArray(categorias) || categorias.length === 0) {
+                    mostrarEstado(grid, "Ainda não há categorias cadastradas.", "vazio");
+                    return;
+                }
+
+                grid.replaceChildren();
+                grid.setAttribute("aria-busy", "false");
+                const iconesMap = {
+                    "Casa": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-6v-7h-4v7H4a1 1 0 0 1-1-1z"/><path d="M9 21v-7h6v7"/></svg>',
+                    "Trabalho Manual": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.7 6.3 3-3a5 5 0 0 1-6.4 6.4L5 16a2.1 2.1 0 0 0 3 3l6.3-6.3a5 5 0 0 0 6.4-6.4l-3 3z"/><path d="m4 4 5 5"/></svg>',
+                    "Beleza e Bem-estar": '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.2 8.2 12 12M8.2 15.8l12-12M14 10l6 6"/></svg>',
+                    "Aulas e Consultoria": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m2 8 10-5 10 5-10 5zM6 10v6c3 3 9 3 12 0v-6M22 8v7"/></svg>',
+                    "Tecnologia e Serviços Digitais": '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M7 9l-2 2 2 2M17 9l2 2-2 2M14 8l-4 6"/></svg>',
+                    "Eventos e Entregas": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h11v12H3zM14 10h4l3 4v4h-7z"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6 9h5M8.5 7v5"/></svg>'
+                };
+
+                categorias.forEach(cat => {
+                    const profissoes = Array.isArray(cat.profissoes) ? cat.profissoes : [];
+                    const link = document.createElement("a");
+                    link.className = "card-categoria-link";
+                    link.href = `ramo_especifico.html?categoria=${encodeURIComponent(cat.id_categoria)}&nome=${encodeURIComponent(cat.nome || "")}`;
+
+                    const card = document.createElement("article");
+                    card.className = "card-categoria";
+                    const conteudo = document.createElement("div");
+                    const cabecalho = document.createElement("div");
+                    cabecalho.className = "card-categoria-header";
+                    const icone = document.createElement("div");
+                    icone.className = "icon-box";
+                    icone.innerHTML = iconesMap[cat.nome] || '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></svg>';
+                    const titulo = document.createElement("h3");
+                    titulo.textContent = cat.nome || "Categoria";
+                    cabecalho.append(icone, titulo);
+
+                    const descricao = document.createElement("p");
+                    descricao.className = "card-categoria-desc";
+                    descricao.textContent = cat.descricao || "Encontre profissionais desta categoria.";
+                    conteudo.append(cabecalho, descricao);
+
+                    const acao = document.createElement("span");
+                    acao.className = "categoria-acao";
+                    acao.textContent = profissoes.length
+                        ? `${profissoes.length} ${profissoes.length === 1 ? "profissão" : "profissões"} · Ver opções →`
+                        : "Ver profissões →";
+
+                    card.append(conteudo, acao);
+                    link.appendChild(card);
+                    grid.appendChild(link);
+                });
+            } catch (erro) {
+                mostrarEstado(grid, "Não foi possível carregar as categorias. Confira a conexão com a API.", "erro", carregarCategorias);
+            }
+        }
+
+        async function carregarProfissionais() {
+            const grid = document.getElementById("grid-profissionais");
+            mostrarEstado(grid, "Carregando profissionais...", "carregando");
+            try {
+                const profissionais = await buscarProfissionais();
+                if (!Array.isArray(profissionais) || profissionais.length === 0) {
+                    mostrarEstado(grid, "Ainda não há profissionais cadastrados.", "vazio");
+                    return;
+                }
+
+                grid.replaceChildren();
+                grid.setAttribute("aria-busy", "false");
+                profissionais.slice(0, 6).forEach(profissional => {
+                    const linkPerfil = document.createElement("a");
+                    linkPerfil.className = "card-profissional-link";
+                    linkPerfil.href = `perfil.html?usuario_id=${encodeURIComponent(profissional.id_usuario)}`;
+                    linkPerfil.setAttribute("aria-label", `Abrir perfil de ${profissional.nome || "profissional"}`);
+                    const card = document.createElement("article");
+                    card.className = "card-profissional";
+
+                    const nomeCompleto = profissional.nome || "Profissional AutonoMe";
+                    const avatar = document.createElement("div");
+                    avatar.className = "avatar-prof-card";
+                    avatar.setAttribute("aria-hidden", "true");
+                    avatar.dataset.avatarUsuarioId = profissional.id_usuario;
+                    mostrarAvatar(avatar, nomeCompleto, profissional.foto);
+                    const nome = document.createElement("h3");
+                    nome.className = "card-prof-nome";
+                    nome.textContent = nomeCompleto;
+                    const ocupacao = document.createElement("p");
+                    ocupacao.className = "card-prof-cargo";
+                    ocupacao.textContent = Array.isArray(profissional.profissoes) && profissional.profissoes.length
+                        ? profissional.profissoes.join(" · ")
+                        : (profissional.categoria || "Profissional autônomo");
+
+                    const avaliacao = Number(profissional.media_avaliacao);
+                    const rating = document.createElement("p");
+                    rating.className = "estrelas-rating";
+                    rating.textContent = Number.isFinite(avaliacao) && avaliacao > 0
+                        ? `★ ${avaliacao.toFixed(1)}`
+                        : "Ainda sem avaliações";
+
+                    const experiencia = document.createElement("p");
+                    experiencia.className = "card-prof-exp";
+                    experiencia.textContent = profissional.experiencia
+                        ? `${profissional.experiencia} de experiência`
+                        : "Novo na plataforma";
+
+                    const preco = document.createElement("p");
+                    preco.className = "card-prof-preco";
+                    if (Number(profissional.preco_hora) > 0) {
+                        preco.textContent = `${Number(profissional.preco_hora).toLocaleString("pt-BR", { style: "currency", currency: "BRL"})}/hora`;
+                    }
+
+                    card.append(avatar, nome, ocupacao, experiencia, rating);
+                    if (preco.textContent) card.appendChild(preco);
+                    linkPerfil.appendChild(card);
+                    grid.appendChild(linkPerfil);
+                });
+            } catch (erro) {
+                mostrarEstado(grid, "Não foi possível carregar os profissionais. Confira a conexão com a API.", "erro", carregarProfissionais);
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            carregarCategorias();
+            carregarProfissionais();
+        });
+    </script>
+</body>
+</html>

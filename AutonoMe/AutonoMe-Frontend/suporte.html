@@ -1,0 +1,39 @@
+<!--
+  Suporte / Fale Conosco (baseado na tela "Comentário_Cliente" do print).
+  É o "hub" que leva pras outras telas de suporte.
+
+  Obs: "Reclamações" aponta pro mesmo formulário de sup_sugestao.html por
+  enquanto (mesmo formato de campos: Nome/Comentário/Contato) - se um dia
+  precisar de um texto diferente pra reclamação, é só duplicar o arquivo.
+-->
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>suporte</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="default" data-pagina="perfil">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <div class="suporte-icone">🎧</div>
+            <p class="suporte-texto">
+                Deixe aqui as suas sugestões, reclamações ou feedbacks do app,
+                para que o app seja muito bom.
+            </p>
+
+            <a href="sup_sugestao.html" class="btn-submit">Sugestões</a>
+            <a href="sup_sugestao.html?tipo=reclamacao" class="btn-submit">Reclamações</a>
+            <a href="sup_ajuda.html" class="btn-submit">Ajuda</a>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/menu.js?v=foto1"></script>
+</body>
+</html>

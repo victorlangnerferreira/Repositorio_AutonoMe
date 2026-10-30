@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutonoMe - Criar conta</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body>
+    <main class="auth-shell">
+        <section class="caixa auth-card">
+            <img src="static/importantes/logo.png" alt="Logo AutonoMe" class="logo">
+            <h1>Criar conta</h1>
+
+            <form id="form-cadastro" class="auth-form">
+                <input type="text" id="nome" class="auth-input" placeholder="Nome" minlength="2" maxlength="120" required>
+                <input type="email" id="email" class="auth-input" placeholder="E-mail" maxlength="120" required>
+                <input type="text" id="cpf" class="auth-input" placeholder="CPF" inputmode="numeric" autocomplete="off" maxlength="14" required>
+                <input type="tel" id="telefone" class="auth-input" placeholder="Celular com DDD" inputmode="numeric" autocomplete="tel" maxlength="15" required>
+                <a class="auth-link auth-link-secundario" href="https://www.gov.br/pt-br/servicos/consultar-cadastro-de-pessoas-fisicas" target="_blank" rel="noopener noreferrer">Consultar situação do CPF na Receita Federal</a>
+
+                <input type="password" id="senha" class="auth-input" placeholder="Senha" minlength="8" maxlength="72" autocomplete="new-password" required>
+                <input type="password" id="confirmar" class="auth-input" placeholder="Confirme a senha" minlength="8" maxlength="72" autocomplete="new-password" required>
+
+                <div class="auth-role-options" role="radiogroup" aria-label="Como deseja usar o AutonoMe">
+                    <button type="button" id="btn-cliente" class="auth-role-button selecionada" aria-pressed="true">Quero contratar</button>
+                    <button type="button" id="btn-profissional" class="auth-role-button" aria-pressed="false">Quero ser contratado</button>
+                </div>
+
+                <div id="verificacao-cadastro" hidden>
+                    <label class="visualmente-oculto" for="codigo-cadastro">Código de verificação do e-mail</label>
+                    <input type="text" id="codigo-cadastro" class="auth-input" placeholder="Código de 6 caracteres" maxlength="6" minlength="6" pattern="[A-Za-z0-9]{6}" autocomplete="one-time-code" disabled>
+                    <button type="button" id="btn-editar-cadastro" class="auth-role-button" hidden>Editar dados e pedir outro código</button>
+                </div>
+
+                <button type="submit" class="btn-submit" id="btn-confirmar">Confirmar</button>
+            </form>
+
+            <p id="mensagem-erro" class="mensagem-erro auth-message" role="alert" aria-live="polite"></p>
+            <a href="login.html" class="auth-link">Já tenho conta? Entrar</a>
+        </section>
+    </main>
+
+    <script src="js/api.js?v=auth3"></script>
+    <script src="js/cadastro.js?v=auth3"></script>
+</body>
+</html>

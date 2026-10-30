@@ -1,0 +1,95 @@
+<!--
+  Histórico (baseado nas telas "Histórico_contratados" do print).
+  Tem DUAS abas, porque o mesmo usuário pode ter contratado alguém (aba
+  "Contratados") e também ter sido contratado por alguém (aba "Contratações") -
+  eram as "ambas as partes" que você mencionou.
+
+  Cada linha da lista linka pra perfil.html?usuario=nome (a pessoa do outro
+  lado do contrato).
+-->
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>historico</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="default" data-pagina="lista_chats">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <div class="abas">
+                <button class="aba-item ativa" data-aba="contratados" onclick="trocarAba('contratados')">Serviços Contratados</button>
+            </div>
+
+            <!-- Painel populado dinamicamente com loop sobre os dados da tabela contratacoes -->
+            <div id="relatorio-pedidos" class="relatorio-pedidos"></div>
+            <div id="painel-contratados" class="aba-painel"></div>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script>
+        function trocarAba(aba) {
+            document.querySelectorAll(".aba-item").forEach((botao) => {
+                botao.classList.toggle("ativa", botao.dataset.aba === aba);
+            });
+        }
+
+        // Loop de renderização dinâmica para exibir o histórico de contratações
+        async function carregarHistorico() {
+            const container = document.getElementById("painel-contratados");
+            const usuarioSalvo = localStorage.getItem("usuario");
+            const usuarioObj = usuarioSalvo ? JSON.parse(usuarioSalvo) : null;
+            const idUsuario = usuarioObj ? usuarioObj.id : 1;
+
+            try {
+                const lista = await buscarContratacoes(idUsuario);
+                if (!lista || lista.length === 0) {
+                    container.innerHTML = '<p style="text-align:center; padding:20px;">Nenhum serviço contratado no momento.</p>';
+                    return;
+                }
+
+                container.innerHTML = "";
+                lista.forEach((c) => {
+                    const item = document.createElement("a");
+                    item.href = `perfil.html?usuario=${encodeURIComponent(c.profissional_nome)}`;
+                    item.className = "item-profissional";
+                    item.style.display = "flex";
+                    item.style.justifyContent = "space-between";
+                    item.style.alignItems = "center";
+                    item.style.padding = "10px";
+                    item.style.marginBottom = "8px";
+                    item.style.borderBottom = "1px solid #eee";
+
+                    item.innerHTML = `
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span class="avatar-circulo">👤</span>
+                            <div>
+                                <strong>Profissional: ${c.profissional_nome}</strong>
+                                <div style="font-size:0.85rem; color:#666;">Data: ${c.data_servico || "A definir"}</div>
+                            </div>
+                        </div>
+                        <div>
+                            <span style="font-weight:bold; color:#2E7D32;">R$ ${c.valor.toFixed(2)}</span>
+                            <div style="font-size:0.8rem; text-align:right; text-transform:capitalize; color:#888;">${c.status}</div>
+                        </div>
+                    `;
+                    container.appendChild(item);
+                });
+            } catch (erro) {
+                container.innerHTML = `<p style="color:red; text-align:center;">Erro ao carregar contratações.</p>`;
+            }
+        }
+
+        // A tela dinâmica é carregada por js/historico.js.
+    </script>
+    <script src="js/historico.js"></script>
+</body>
+</html>

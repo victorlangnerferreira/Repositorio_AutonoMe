@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutonoMe - Configurar serviços</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Meus serviços" data-sem-editar="true" data-pagina="perfil">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+        <main class="app-conteudo">
+            <section class="card-box servicos-configuracao">
+                <h1 class="titulo-secao">Quais serviços você oferece?</h1>
+                <p class="servicos-instrucao">Marque todas as profissões que você atende. Elas serão mostradas no seu perfil.</p>
+                <label class="visualmente-oculto" for="busca-servicos">Buscar profissão</label>
+                <input type="search" id="busca-servicos" class="campo-busca-servicos" placeholder="Buscar profissão..." autocomplete="off">
+                <p id="total-servicos-selecionados" class="servicos-contagem" aria-live="polite">Carregando serviços...</p>
+                <div id="lista-categorias-servicos" class="lista-categorias-servicos" aria-live="polite" aria-busy="true"></div>
+                <button type="button" id="btn-salvar-servicos" class="btn-submit" disabled>Salvar serviços</button>
+                <p id="mensagem-servicos" class="form-feedback" role="status" aria-live="polite"></p>
+            </section>
+        </main>
+        <div id="bottombar-placeholder"></div>
+    </div>
+    <script src="js/api.js?v=servicos1"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script src="js/configurar_servicos.js?v=servicos1"></script>
+</body>
+</html>

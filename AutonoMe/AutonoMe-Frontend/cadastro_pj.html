@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonome: Cadastro</title>
+    <script src="js/tema.js"></script>
+</head>
+<style>
+    body{
+        background-color: #2E7D32;
+    }
+    .container{
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin: 5vh;
+    }
+    .caixa{
+        background-color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        border-radius: 8px;
+        padding: 35px;
+        width: 30vw;
+    }
+    .logo{
+        width: 50%;
+        height: auto;
+    }
+
+    input{
+        background-color: #66C34C;
+        color: white;
+        width: 350px;
+        padding: 10px;
+        margin: 5px;
+        border: none;
+        outline: none;
+        border-radius: 5px;
+    }
+
+    button{
+        background-color: #2E7D32;
+        width: 150px;
+        height: 30px;
+        margin: 5px;
+        border: none;
+        outline: none;
+        cursor: pointer;
+        border-radius: 4px;
+        color: white;
+    }
+
+    :root[data-tema="escuro"] body {
+        background-color: #080908 !important;
+        background-image: radial-gradient(ellipse at 15% 0%, rgba(190, 157, 91, 0.12), transparent 44%) !important;
+        color: #f1f0e8;
+    }
+    :root[data-tema="escuro"] .caixa {
+        background-color: #46583d !important;
+        color: #f1f0e8;
+    }
+    :root[data-tema="escuro"] input,
+    :root[data-tema="escuro"] select {
+        background-color: #46513b !important;
+        color: #f1f0e8;
+    }
+    :root[data-tema="escuro"] a { color: #d4e3c5 !important; }
+    :root[data-tema="escuro"] .caixa h1,
+    :root[data-tema="escuro"] .caixa h2 { color: #d4e3c5; }
+    :root[data-tema="escuro"] .aba-btn:not(.ativa) {
+        background-color: #46513b;
+        color: #f1f0e8;
+    }
+</style>
+<body>
+    <div class="container">
+        <div class="caixa">
+            <img src="images/Logo_AutonoMe1.png" class="logo">
+            <h1>Bem Vindo!</h1>
+            <form id="form-cadastro">
+                <input type="text" id="nome" placeholder="Nome">
+                <input type="text" id="email" placeholder="E-mail">
+                <input type="text" id="cpf" placeholder="CPF">
+                <input type="text" id="usuario" placeholder="Nome de usuário">
+                <input type="password" id="senha" placeholder="Senha (mín. 8 caracteres)" minlength="8" maxlength="72" required>
+                <input type="password" id="confirmar" placeholder="Confirmar senha" minlength="8" maxlength="72" required><br>
+                <button type="submit">Confirmar</button>
+                <a href="login.html"><button type="button">Voltar</button></a>
+            </form>
+            <p id="mensagem-erro"></p>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        const formCadastro = document.getElementById("form-cadastro");
+        const mensagemErro = document.getElementById("mensagem-erro");
+
+        formCadastro.addEventListener("submit", async function (evento) {
+            evento.preventDefault();
+
+            const nome = document.getElementById("nome").value;
+            const email = document.getElementById("email").value;
+            const cpf = document.getElementById("cpf").value;
+            const usuario = document.getElementById("usuario").value;
+            const senha = document.getElementById("senha").value;
+            const confirmar = document.getElementById("confirmar").value;
+
+            try {
+                // cadastrarCpf(nome, cpf, usuario, email, senha, confirmacaoSenha) - vem de api.js
+                await cadastrarCpf(nome, cpf, usuario, email, senha, confirmar);
+                window.location.href = "inicial.html";
+            } catch (erro) {
+                mensagemErro.textContent = erro.message;
+            }
+        });
+    </script>
+</body>
+</html>

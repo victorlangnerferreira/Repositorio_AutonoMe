@@ -1,0 +1,65 @@
+<!--
+  Formulário de sugestão (baseado na tela "Sugestões Menu" do print).
+  Também é usado pra Reclamações (?tipo=reclamacao troca só o título/texto).
+
+  Obs: a tela de confirmação de envio (tipo o "Enviado" do print) fica pra
+  depois, como você pediu - por enquanto o botão só mostra um alert().
+-->
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sup_sugestao</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Sugerir" data-sem-editar="true" data-pagina="perfil">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <h2 class="titulo-secao" id="titulo-formulario">Sugerir</h2>
+
+            <form id="form-sugestao">
+                <label style="font-size:13px; color:#666;">Nome Completo</label>
+                <input type="text" class="input-form" id="nome" required>
+
+                <label style="font-size:13px; color:#666; margin-top:8px;" id="label-comentario">Comentário:</label>
+                <textarea class="input-form" id="comentario" required></textarea>
+
+                <button type="submit" class="btn-submit">Enviar</button>
+            </form>
+
+            <div class="bloco-contato">
+                <strong>Contato</strong>
+                Telefone: +55 11 99999-9999<br>
+                E-mail: empresateste@gmail.com
+            </div>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/menu.js?v=foto1"></script>
+    <script>
+        // Se veio de "Reclamações" (?tipo=reclamacao), troca os textos da tela
+        const tipo = new URLSearchParams(window.location.search).get("tipo");
+        if (tipo === "reclamacao") {
+            document.getElementById("titulo-formulario").textContent = "Reclamar";
+            document.getElementById("label-comentario").textContent = "Reclamação:";
+            document.body.dataset.titulo = "Reclamar";
+            montarTopbar();
+        }
+
+        document.getElementById("form-sugestao").addEventListener("submit", function (evento) {
+            evento.preventDefault();
+            // TODO: essa é a "variação de confirmação" que você disse que
+            // ia fazer depois - por enquanto só um alert de exemplo, e
+            // ainda falta o fetch de verdade pro back-end (não existe
+            // endpoint de sugestão/reclamação ainda).
+            alert("Sua mensagem foi enviada com sucesso, por favor aguarde até que nossa equipe possa ler sua mensagem.");
+        });
+    </script>
+</body>
+</html>

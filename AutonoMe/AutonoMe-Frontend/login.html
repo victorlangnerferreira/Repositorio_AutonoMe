@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutonoMe: Login</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body>
+    <main class="auth-shell">
+        <section class="caixa auth-card">
+            <img src="static/importantes/logo.png" alt="Logo AutonoMe" class="logo">
+            <h1>Entrar</h1>
+
+            <form id="form-login" class="auth-form">
+                <input type="email" id="email" class="auth-input" placeholder="E-mail" autocomplete="username" required>
+                <div class="campo-senha">
+                    <input type="password" id="senha" class="auth-input" placeholder="Senha" autocomplete="current-password" required>
+                    <button type="button" id="alternar-senha" class="icon-btn btn-olho" aria-label="Mostrar senha" aria-pressed="false">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                    </button>
+                </div>
+                <button type="submit" class="btn-submit">Entrar</button>
+            </form>
+
+            <p id="mensagem-erro" class="mensagem-erro auth-message" role="alert" aria-live="polite"></p>
+
+            <a href="cadastro.html" class="auth-link">Ainda não tem conta? Criar conta</a>
+        </section>
+    </main>
+
+    <script src="js/api.js"></script>
+    <script>
+        if (window.location.protocol === "file:") {
+            window.location.replace("http://127.0.0.1:5500/login.html");
+        }
+
+        const formLogin = document.getElementById("form-login");
+        const mensagemErro = document.getElementById("mensagem-erro");
+        const campoSenha = document.getElementById("senha");
+        const botaoOlho = document.getElementById("alternar-senha");
+        const botaoEntrar = formLogin.querySelector('button[type="submit"]');
+
+        botaoOlho.addEventListener("click", function () {
+            const mostrar = campoSenha.type === "password";
+            campoSenha.type = mostrar ? "text" : "password";
+            botaoOlho.setAttribute("aria-label", mostrar ? "Ocultar senha" : "Mostrar senha");
+            botaoOlho.setAttribute("aria-pressed", String(mostrar));
+            campoSenha.focus();
+        });
+
+        formLogin.addEventListener("submit", async function (evento) {
+            evento.preventDefault();
+            mensagemErro.textContent = "";
+            mensagemErro.style.display = "none";
+            botaoEntrar.disabled = true;
+            botaoEntrar.textContent = "Entrando...";
+
+            const email = document.getElementById("email").value;
+            const senha = document.getElementById("senha").value;
+
+            try {
+                const resposta = await login(email, senha);
+                if (resposta.token) localStorage.setItem("token", resposta.token);
+                if (resposta.usuario) localStorage.setItem("usuario", JSON.stringify(resposta.usuario));
+                window.location.href = resposta.redirecionar_para || "homepage.html";
+            } catch (erro) {
+                mensagemErro.textContent = erro instanceof TypeError
+                    ? "Não foi possível conectar. Abra o site em http://127.0.0.1:5500/ e confira se a API está rodando."
+                    : erro.message;
+                mensagemErro.style.display = "block";
+            } finally {
+                botaoEntrar.disabled = false;
+                botaoEntrar.textContent = "Entrar";
+            }
+        });
+    </script>
+</body>
+</html>

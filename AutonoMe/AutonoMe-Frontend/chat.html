@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>chat</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Conversa" data-sem-editar="true" data-pagina="lista_chats">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <div class="chat-janela" id="chat-janela">
+                <div class="balao-mensagem recebida">Olá! Vi seu perfil, você tem disponibilidade essa semana?</div>
+                <div class="balao-mensagem enviada">Tenho sim! Fico livre a partir de quarta.</div>
+                <div class="balao-mensagem recebida">Estou comunicando que contratei seus serviços</div>
+            </div>
+
+            <div class="chat-input-area">
+                <input type="text" id="input-mensagem" placeholder="Digite uma mensagem...">
+                <button id="btn-enviar" class="btn-submit" style="width:auto; padding:10px 16px;">➤</button>
+            </div>
+        </main>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script>
+        const nomeContato = new URLSearchParams(window.location.search).get("contato");
+        if (nomeContato) {
+            document.body.dataset.titulo = decodeURIComponent(nomeContato);
+            montarTopbar();
+        }
+
+        const janela = document.getElementById("chat-janela");
+        const input = document.getElementById("input-mensagem");
+
+        document.getElementById("btn-enviar").addEventListener("click", enviarMensagem);
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter") enviarMensagem(); });
+
+        function enviarMensagem() {
+            const texto = input.value.trim();
+            if (!texto) return;
+
+            const balao = document.createElement("div");
+            balao.className = "balao-mensagem enviada";
+            balao.textContent = texto;
+            janela.appendChild(balao);
+
+            input.value = "";
+            janela.scrollTop = janela.scrollHeight;
+
+        }
+    </script>
+</body>
+</html>

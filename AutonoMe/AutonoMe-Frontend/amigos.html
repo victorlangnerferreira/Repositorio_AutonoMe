@@ -1,0 +1,70 @@
+<!--
+  Amigos (baseado na tela "Favoritos" do print, renomeada a seu pedido).
+-->
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>amigos</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Amigos" data-sem-editar="true" data-pagina="perfil">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <!-- Lista populada dinamicamente via loop JS com dados da tabela favoritos -->
+            <div id="lista-amigos"></div>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script>
+        // Loop de renderização dinâmica para exibir lista de profissionais favoritados
+        async function carregarFavoritos() {
+            const container = document.getElementById("lista-amigos");
+            const usuarioSalvo = localStorage.getItem("usuario");
+            const usuarioObj = usuarioSalvo ? JSON.parse(usuarioSalvo) : null;
+            const idCliente = usuarioObj ? usuarioObj.id : 1;
+
+            try {
+                const favoritos = await buscarFavoritos(idCliente);
+                if (!favoritos || favoritos.length === 0) {
+                    container.innerHTML = '<p style="text-align:center; padding:20px;">Nenhum favorito encontrado.</p>';
+                    return;
+                }
+
+                container.innerHTML = "";
+                favoritos.forEach((fav) => {
+                    const estrelas = "★".repeat(Math.round(fav.media_avaliacao)) + "☆".repeat(5 - Math.round(fav.media_avaliacao));
+                    const item = document.createElement("a");
+                    item.href = `perfil.html?usuario_id=${fav.id_usuario}`;
+                    item.className = "item-amigo";
+                    item.innerHTML = `
+                        <span class="avatar-circulo">👤</span>
+                        <span class="info-amigo">
+                            <strong>${fav.nome}</strong><br>
+                            <span class="estrelas">${estrelas}</span>
+                        </span>
+                        <button class="btn-coracao" onclick="event.preventDefault(); removerAmigo(this, ${fav.id_favorito})">♥</button>
+                    `;
+                    container.appendChild(item);
+                });
+            } catch (erro) {
+                container.innerHTML = `<p style="color:red; text-align:center;">Erro ao carregar favoritos.</p>`;
+            }
+        }
+
+        function removerAmigo(botao, idFavorito) {
+            botao.closest(".item-amigo").remove();
+        }
+
+        carregarFavoritos();
+    </script>
+</body>
+</html>

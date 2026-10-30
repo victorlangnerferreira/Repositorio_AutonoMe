@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutonoMe - Profissionais</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Profissões" data-sem-editar="true" data-pagina="homepage">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            <h2 class="titulo-secao" id="titulo-pagina">Profissionais Disponíveis</h2>
+
+            <form id="form-busca-ramo" class="barra-busca-ramo" role="search">
+                <label class="visualmente-oculto" for="campo-busca-ramo">Buscar profissão ou profissional</label>
+                <input type="search" id="campo-busca-ramo" placeholder="Buscar profissão ou profissional..." autocomplete="off">
+                <button type="submit" class="btn-busca-ramo">Buscar</button>
+            </form>
+
+            <div id="lista-profissoes" class="profissoes-grid" aria-live="polite" aria-busy="true" hidden></div>
+            <div id="lista-profissionais" class="profissionais-grid" aria-live="polite" aria-busy="true"></div>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const categoriaInformada = Number(params.get("categoria"));
+        const profissaoInformada = Number(params.get("profissao"));
+        const categoriaId = Number.isInteger(categoriaInformada) && categoriaInformada > 0 ? categoriaInformada : null;
+        const idProfissao = Number.isInteger(profissaoInformada) && profissaoInformada > 0 ? profissaoInformada : null;
+        const nomeRamo = params.get("nome") || "";
+        const termoInicial = params.get("busca") || "";
+        const eTelaDeProfissoes = categoriaId !== null;
+        const tituloPagina = document.getElementById("titulo-pagina");
+        const listaProfissoes = document.getElementById("lista-profissoes");
+        const listaProfissionais = document.getElementById("lista-profissionais");
+        const formularioBusca = document.getElementById("form-busca-ramo");
+        const campoBusca = document.getElementById("campo-busca-ramo");
+        let profissoesDisponiveis = [];
+        let profissionaisDisponiveis = [];
+
+        campoBusca.value = termoInicial;
+        campoBusca.placeholder = eTelaDeProfissoes
+            ? "Buscar profissão nesta área..."
+            : "Buscar profissional ou profissão...";
+
+        if (eTelaDeProfissoes) {
+            listaProfissoes.hidden = false;
+            listaProfissionais.hidden = true;
+        }
+
+        function atualizarTituloPagina() {
+            if (eTelaDeProfissoes) {
+                tituloPagina.textContent = nomeRamo ? `Profissões: ${nomeRamo}` : "Profissões disponíveis";
+                document.body.dataset.titulo = "Profissões";
+            } else if (idProfissao) {
+                tituloPagina.textContent = nomeRamo ? `Profissionais: ${nomeRamo}` : "Profissionais disponíveis";
+                document.body.dataset.titulo = "Profissionais";
+            } else if (campoBusca.value.trim()) {
+                tituloPagina.textContent = `Busca por: "${campoBusca.value.trim()}"`;
+                document.body.dataset.titulo = "Resultados da busca";
+            } else {
+                tituloPagina.textContent = "Profissionais disponíveis";
+                document.body.dataset.titulo = "Profissionais";
+            }
+        }
+
+        atualizarTituloPagina();
+
+        function mostrarEstado(container, mensagem, tipo) {
+            container.replaceChildren();
+            container.setAttribute("aria-busy", String(tipo === "carregando"));
+            const estado = document.createElement("p");
+            estado.className = `estado-lista estado-lista--${tipo}`;
+            estado.setAttribute("role", tipo === "erro" ? "alert" : "status");
+            if (tipo === "carregando") {
+                const spinner = document.createElement("span");
+                spinner.className = "loading-spinner";
+                spinner.setAttribute("aria-hidden", "true");
+                estado.appendChild(spinner);
+            }
+            estado.appendChild(document.createTextNode(mensagem));
+            container.appendChild(estado);
+        }
+
+        function renderizarProfissoes() {
+            const termo = campoBusca.value.trim().toLocaleLowerCase("pt-BR");
+            const encontradas = profissoesDisponiveis.filter(profissao =>
+                String(profissao.nome || "").toLocaleLowerCase("pt-BR").includes(termo)
+            );
+            if (!encontradas.length) {
+                mostrarEstado(listaProfissoes, termo ? "Nenhuma profissão corresponde à busca." : "Esta área ainda não tem profissões cadastradas.", "vazio");
+                return;
+            }
+
+            listaProfissoes.replaceChildren();
+            listaProfissoes.setAttribute("aria-busy", "false");
+            encontradas.forEach(profissao => {
+                const link = document.createElement("a");
+                link.className = "card-profissao-link";
+                link.href = `ramo_especifico.html?profissao=${encodeURIComponent(profissao.id_profissao)}&nome=${encodeURIComponent(profissao.nome || "")}`;
+
+                const card = document.createElement("article");
+                card.className = "card-profissao-area";
+                const icone = document.createElement("span");
+                icone.className = "profissao-icone";
+                icone.setAttribute("aria-hidden", "true");
+                icone.textContent = "✦";
+                const nome = document.createElement("span");
+                nome.className = "profissao-nome";
+                nome.textContent = profissao.nome || "Profissão";
+                const acao = document.createElement("span");
+                acao.className = "profissao-acao";
+                acao.textContent = "Ver profissionais →";
+                card.append(icone, nome, acao);
+                link.appendChild(card);
+                listaProfissoes.appendChild(link);
+            });
+        }
+
+        function renderizarProfissionais() {
+            const termo = campoBusca.value.trim().toLocaleLowerCase("pt-BR");
+            const encontrados = profissionaisDisponiveis.filter(profissional => {
+                const profissoes = Array.isArray(profissional.profissoes) ? profissional.profissoes : [];
+                const texto = [profissional.nome, profissional.categoria, ...profissoes]
+                    .map(valor => String(valor || "").toLocaleLowerCase("pt-BR"));
+                return texto.some(valor => valor.includes(termo));
+            });
+            if (!encontrados.length) {
+                mostrarEstado(listaProfissionais, termo ? "Nenhum resultado corresponde à busca." : "Nenhum profissional encontrado para esta profissão.", "vazio");
+                return;
+            }
+
+            listaProfissionais.replaceChildren();
+            listaProfissionais.setAttribute("aria-busy", "false");
+            encontrados.forEach(profissional => {
+                const nomeCompleto = profissional.nome || "Profissional AutonoMe";
+                const avaliacao = Math.max(0, Math.min(5, Number(profissional.media_avaliacao) || 0));
+                const estrelas = "★".repeat(Math.round(avaliacao)) + "☆".repeat(5 - Math.round(avaliacao));
+                const card = document.createElement("article");
+                card.className = "card-profissional";
+
+                const avatar = document.createElement("div");
+                avatar.className = "avatar-prof-card";
+                avatar.dataset.avatarUsuarioId = profissional.id_usuario;
+                mostrarAvatar(avatar, nomeCompleto, profissional.foto);
+                avatar.setAttribute("aria-hidden", "true");
+                const nome = document.createElement("h3");
+                nome.className = "card-prof-nome";
+                nome.textContent = nomeCompleto;
+                const cargo = document.createElement("p");
+                cargo.className = "card-prof-cargo";
+                cargo.textContent = Array.isArray(profissional.profissoes) && profissional.profissoes.length
+                    ? profissional.profissoes.join(", ")
+                    : "Autônomo";
+                const experiencia = document.createElement("p");
+                experiencia.className = "card-prof-exp";
+                experiencia.textContent = `Experiência: ${profissional.experiencia || "N/A"}`;
+                const rating = document.createElement("p");
+                rating.className = "estrelas-rating";
+                rating.textContent = `${estrelas} (${avaliacao.toFixed(1)})`;
+
+                card.append(avatar, nome, cargo, experiencia, rating);
+                const precoHora = Number(profissional.preco_hora);
+                if (Number.isFinite(precoHora) && precoHora > 0) {
+                    const preco = document.createElement("p");
+                    preco.className = "card-prof-preco";
+                    preco.textContent = `${precoHora.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/hora`;
+                    card.appendChild(preco);
+                }
+
+                const agendar = document.createElement("a");
+                agendar.className = "btn-submit";
+                agendar.style.margin = "0";
+                agendar.style.width = "100%";
+                agendar.style.textAlign = "center";
+                agendar.style.textDecoration = "none";
+                agendar.href = `agendamento.html?profissional_id=${encodeURIComponent(profissional.id_profissional)}&profissional=${encodeURIComponent(nomeCompleto)}`;
+                agendar.textContent = "Ver perfil e agendar";
+                card.appendChild(agendar);
+                listaProfissionais.appendChild(card);
+            });
+        }
+
+        async function carregarProfissoes() {
+            mostrarEstado(listaProfissoes, "Carregando profissões...", "carregando");
+            try {
+                profissoesDisponiveis = await buscarProfissoesPorCategoria(categoriaId);
+                renderizarProfissoes();
+            } catch (erro) {
+                mostrarEstado(listaProfissoes, "Não foi possível carregar as profissões. Confira a conexão com a API.", "erro");
+            }
+        }
+
+        async function carregarProfissionais() {
+            mostrarEstado(listaProfissionais, "Carregando profissionais...", "carregando");
+            try {
+                profissionaisDisponiveis = await buscarProfissionais(idProfissao);
+                renderizarProfissionais();
+            } catch (erro) {
+                mostrarEstado(listaProfissionais, "Não foi possível carregar os profissionais. Confira a conexão com a API.", "erro");
+            }
+        }
+
+        formularioBusca.addEventListener("submit", function (evento) {
+            evento.preventDefault();
+            atualizarTituloPagina();
+            if (eTelaDeProfissoes) renderizarProfissoes();
+            else renderizarProfissionais();
+        });
+
+        function limparBuscaEVoltarAoInicio() {
+            campoBusca.value = "";
+            const parametrosAtuais = new URLSearchParams(window.location.search);
+            parametrosAtuais.delete("busca");
+            const query = parametrosAtuais.toString();
+            const novaUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+            window.history.replaceState(null, "", novaUrl);
+            atualizarTituloPagina();
+            if (eTelaDeProfissoes) renderizarProfissoes();
+            else renderizarProfissionais();
+        }
+
+        campoBusca.addEventListener("keydown", function (evento) {
+            if (evento.key !== "Enter" || campoBusca.value.trim()) return;
+            evento.preventDefault();
+            limparBuscaEVoltarAoInicio();
+        });
+
+        campoBusca.addEventListener("input", function () {
+            if (eTelaDeProfissoes && profissoesDisponiveis.length) renderizarProfissoes();
+            else if (!eTelaDeProfissoes && profissionaisDisponiveis.length) renderizarProfissionais();
+        });
+
+        document.addEventListener("DOMContentLoaded", function () {
+            if (eTelaDeProfissoes) carregarProfissoes();
+            else carregarProfissionais();
+        });
+    </script>
+</body>
+</html>

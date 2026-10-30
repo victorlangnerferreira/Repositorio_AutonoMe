@@ -1,0 +1,93 @@
+<!--
+  Configurações (baseado na tela "Configuração" do print).
+-->
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>configuracao</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Configurações" data-sem-editar="true" data-pagina="perfil">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+
+        <main class="app-conteudo">
+            
+            <div class="linha-config">
+                <span>Notificações</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="linha-config">
+                <span>Modo Escuro</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-modo-escuro" aria-label="Ativar modo escuro">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="linha-config">
+                <span>Permitir Localização</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="linha-config">
+                <span>Permitir Uso do Microfone</span>
+                <label class="toggle-switch">
+                    <input type="checkbox">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="linha-config">
+                <span>Permitir Uso da Câmera</span>
+                <label class="toggle-switch">
+                    <input type="checkbox">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="sobre-app">
+                Sobre o app:<br>
+                Aplicativo versão 1.0
+            </div>
+            <button type="button" id="btn-salvar-alteracoes" class="btn-submit">Salvar Alterações</button>
+            <p id="feedback-config" class="config-feedback" role="status" aria-live="polite"></p>
+            <button type="button" id="btn-logoff" class="btn-logoff">Sair da conta</button>
+
+            <section class="zona-perigo" aria-labelledby="titulo-zona-perigo">
+                <h2 id="titulo-zona-perigo">Desativar minha conta</h2>
+                <p>A conta ficará inativa e será guardada no registro de contas desativadas. Não será possível entrar enquanto estiver inativa.</p>
+                <label for="senha-desativacao">Confirme sua senha</label>
+                <input type="password" id="senha-desativacao" autocomplete="current-password" required>
+                <label class="confirmacao-desativacao">
+                    <input type="checkbox" id="confirmar-desativacao">
+                    Entendo que minha conta será desativada.
+                </label>
+                <div id="codigo-desativacao-area" hidden>
+                    <label for="codigo-desativacao">Código enviado ao e-mail da sua conta</label>
+                    <input type="text" id="codigo-desativacao" maxlength="6" minlength="6" pattern="[A-Za-z0-9]{6}" autocomplete="one-time-code" disabled>
+                    <button type="button" id="btn-reenviar-codigo-desativacao">Enviar outro código</button>
+                </div>
+                <button type="button" id="btn-desativar-conta" class="btn-desativar-conta">Desativar conta</button>
+                <p id="feedback-desativacao" role="status" aria-live="polite"></p>
+            </section>
+        </main>
+
+        <div id="bottombar-placeholder"></div>
+    </div>
+
+    <script src="js/api.js?v=conta3"></script>
+    <script src="js/menu.js?v=foto1"></script>
+    <script src="js/configuracao.js?v=conta3"></script>
+</body>
+</html>
