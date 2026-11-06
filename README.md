@@ -43,12 +43,12 @@ O projeto Android requer JDK 17, Android SDK 34 e Gradle 8.7. O APK conectado se
 
 ## Publicar no Render
 
-Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **testes iniciais**, sem cobrança automática de compute. Neste plano o servidor pode dormir após 15 minutos sem uso, e o banco SQLite fica em armazenamento temporário: contas e sessões podem ser apagadas quando o serviço reinicia ou recebe um novo deploy. Não use esta configuração para dados importantes. Para preservar contas será necessário migrar para um plano que aceite disco persistente, montar o disco em `/data` e definir `AUTONOME_DB_PATH=/data/autonome.sqlite3`; o serviço pago pode gerar cobranças. Para publicar:
+Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **testes iniciais**, sem cobrança automática de compute. Neste plano o servidor pode dormir após 15 minutos sem uso, o banco SQLite fica em armazenamento temporário e conexões SMTP de saída são bloqueadas. Assim, a interface e a API podem abrir, mas o cadastro e a desativação por e-mail não funcionam nesse plano. Não use esta configuração para dados importantes. Para preservar contas será necessário migrar para um plano que aceite disco persistente, montar o disco em `/data` e definir `AUTONOME_DB_PATH=/data/autonome.sqlite3`; serviços pagos podem gerar cobranças. Para publicar:
 
 1. Envie este repositório para o GitHub e confirme que a branch a publicar contém `Dockerfile` e `render.yaml`.
 2. Crie ou entre na sua conta em [dashboard.render.com](https://dashboard.render.com), escolha **New → Blueprint**, conecte o GitHub e selecione o repositório/branch.
 3. Revise e confirme o Blueprint `render.yaml`. Ele configura o serviço gratuito de teste e gera `APP_SECRET` automaticamente.
-4. Preencha no painel do serviço estas variáveis SMTP, sem colocar senhas no repositório:
+4. As variáveis SMTP aparecem no Blueprint, mas só funcionam em um serviço/hospedagem que permita conexões SMTP de saída. Para uma hospedagem compatível, preencha no painel do serviço:
 
    | Variável | Valor |
    | --- | --- |
@@ -62,10 +62,16 @@ Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **
    | `SMTP_PASSWORD` | senha de aplicativo SMTP |
    | `SMTP_FROM` | endereço remetente verificado no provedor |
 
-5. Gere um domínio público HTTPS em **Settings → Networking → Generate Domain**. Espere o deploy ficar saudável, abra esse endereço no celular e teste o envio de código por e-mail.
+5. Gere um domínio público HTTPS em **Settings → Networking → Generate Domain**. Espere o deploy ficar saudável, abra esse endereço no celular e teste o envio de código por e-mail. No plano Free, o endpoint de cadastro retornará uma mensagem explicando que o serviço SMTP está indisponível.
 6. Gere o APK com o endereço HTTPS do domínio Render usando o comando da seção anterior. O app e o backend ficam no mesmo domínio, necessário para que o cookie de sessão funcione corretamente.
 
-O serviço gratuito pode ficar temporariamente indisponível ao acordar e não preserva os dados locais entre reinicializações. O envio de códigos de cadastro depende de credenciais SMTP válidas e pode ter custos do provedor. Nunca envie `APP_SECRET`, senha SMTP ou códigos de verificação pelo chat; `APP_SECRET` é gerado pelo Render e as credenciais SMTP devem ser preenchidas apenas no painel. O APK atual não ganha conectividade retroativamente: é necessário gerar e instalar outro APK depois de ter o domínio publicado.
+O serviço gratuito pode ficar temporariamente indisponível ao acordar e não preserva os dados locais entre reinicializações. Este backend atualmente envia e-mails somente por SMTP; um provedor que ofereça apenas API HTTPS ainda não é compatível. Nunca envie `APP_SECRET`, senha SMTP ou códigos de verificação pelo chat; `APP_SECRET` é gerado pelo Render e as credenciais SMTP devem ser preenchidas apenas no painel **Environment** do serviço. O APK atual não ganha conectividade retroativamente: é necessário gerar e instalar outro APK depois de ter o domínio publicado.
+
+### Configurar envio com Gmail em hospedagem compatível com SMTP
+
+O envio por `smtp.gmail.com:587` **não funciona no plano Free do Render**, mesmo que as variáveis estejam preenchidas. Em um plano/hospedagem que permita SMTP, abra o serviço no Render e vá a **Environment → Edit**. Configure `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USERNAME` com seu endereço Gmail, `SMTP_FROM` com o mesmo endereço e `SMTP_PASSWORD` com uma **senha de app Google** (não a senha normal da conta). A senha de app é criada em [Segurança da Conta Google → Senhas de app](https://myaccount.google.com/apppasswords); a verificação em duas etapas precisa estar ativa. Salve e aguarde o deploy ficar **Live**. Não compartilhe a senha de app no chat nem no GitHub. Se usar outro provedor, obtenha dele o host, a porta, o usuário, a senha SMTP e o remetente autorizado.
+
+Se quiser continuar usando o plano Free do Render, será necessário integrar um provedor de envio por API HTTPS; isso ainda exige escolher um provedor e configurar um remetente autorizado, e não é suportado pelo backend atual. Não adianta adicionar uma chave de API de e-mail ao Render até essa integração existir.
 
 ## Fluxos incluídos
 

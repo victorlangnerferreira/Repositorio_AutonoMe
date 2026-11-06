@@ -37,6 +37,12 @@ if not APP_SECRET:
 OTP_LIFETIME_SECONDS = 10 * 60
 SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 OTP_MAX_ATTEMPTS = 5
+SMTP_NOT_CONFIGURED_MESSAGE = (
+    "O envio de e-mail não está configurado. Este servidor usa SMTP, bloqueado no plano "
+    "Free do Render. Para habilitar o cadastro, use uma hospedagem/plano que permita SMTP "
+    "e configure SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM em Environment. "
+    "O envio por API HTTPS ainda não está integrado."
+)
 OTP_ALPHABET = string.ascii_uppercase + string.digits
 VALID_DDDS = {
     "11", "12", "13", "14", "15", "16", "17", "18", "19", "21", "22", "24", "27", "28",
@@ -407,7 +413,7 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             with database() as db:
                 db.execute("DELETE FROM email_verifications WHERE id = ?", (challenge_id,))
             if "not configured" in str(error).lower():
-                raise APIError(HTTPStatus.SERVICE_UNAVAILABLE, "O envio de e-mail ainda não está configurado no servidor.") from error
+                raise APIError(HTTPStatus.SERVICE_UNAVAILABLE, SMTP_NOT_CONFIGURED_MESSAGE) from error
             self.log_error("Email delivery failed for registration: %s", error)
             raise APIError(HTTPStatus.BAD_GATEWAY, "Não foi possível enviar o código. Confira o e-mail ou tente novamente.") from error
         return HTTPStatus.ACCEPTED, {"message": "Código enviado para o e-mail informado."}, []
@@ -470,7 +476,7 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             with database() as db:
                 db.execute("DELETE FROM email_verifications WHERE id = ?", (challenge_id,))
             if "not configured" in str(error).lower():
-                raise APIError(HTTPStatus.SERVICE_UNAVAILABLE, "O envio de e-mail ainda não está configurado no servidor.") from error
+                raise APIError(HTTPStatus.SERVICE_UNAVAILABLE, SMTP_NOT_CONFIGURED_MESSAGE) from error
             self.log_error("Email delivery failed for verification resend: %s", error)
             raise APIError(HTTPStatus.BAD_GATEWAY, "Não foi possível enviar o código. Tente novamente.") from error
         return HTTPStatus.ACCEPTED, {"message": "Enviamos um novo código para o e-mail."}, []
@@ -550,7 +556,7 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             with database() as db:
                 db.execute("DELETE FROM email_verifications WHERE id = ?", (challenge_id,))
             if "not configured" in str(error).lower():
-                raise APIError(HTTPStatus.SERVICE_UNAVAILABLE, "O envio de e-mail ainda não está configurado no servidor.") from error
+                raise APIError(HTTPStatus.SERVICE_UNAVAILABLE, SMTP_NOT_CONFIGURED_MESSAGE) from error
             self.log_error("Email delivery failed for account deactivation: %s", error)
             raise APIError(HTTPStatus.BAD_GATEWAY, "Não foi possível enviar o código. Tente novamente.") from error
         return HTTPStatus.ACCEPTED, {"message": "Código enviado para o e-mail da conta."}, []

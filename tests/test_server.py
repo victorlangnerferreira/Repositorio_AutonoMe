@@ -103,7 +103,10 @@ class AccountAPITests(unittest.TestCase):
         server.send_verification_email = lambda *_args: (_ for _ in ()).throw(RuntimeError("Email delivery is not configured."))
         status, response = self.request("POST", "/api/auth/register/start", {**payload, "email": "other@example.com"})
         self.assertEqual(status, 503)
-        self.assertIn("não está configurado", response["error"])
+        self.assertIn("SMTP_HOST", response["error"])
+        self.assertIn("SMTP_PASSWORD", response["error"])
+        self.assertIn("Free do Render", response["error"])
+        self.assertIn("API HTTPS ainda não está integrado", response["error"])
         with server.database() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM email_verifications WHERE email = 'other@example.com'").fetchone()[0], 0)
 
