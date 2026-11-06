@@ -1,12 +1,22 @@
+import java.net.URI
+import java.net.URISyntaxException
+import groovy.json.JsonOutput
+
 plugins {
     id "com.android.application"
 }
 
 def autonomeAppUrl = (project.findProperty("autonomeAppUrl") ?: "").toString().trim()
-if (!autonomeAppUrl.isEmpty() && !autonomeAppUrl.matches("^https://[^\\s\"']+$")) {
-    throw new GradleException("autonomeAppUrl must be an HTTPS URL.")
+if (!autonomeAppUrl.isEmpty()) {
+    try {
+        def appUri = new URI(autonomeAppUrl)
+        if (appUri.scheme != "https" || !appUri.host) {
+            throw new GradleException("autonomeAppUrl must be an HTTPS URL.")
+        }
+    } catch (URISyntaxException error) {
+        throw new GradleException("autonomeAppUrl must be a valid HTTPS URL.", error)
+    }
 }
-def escapedAutonomeAppUrl = autonomeAppUrl.replace("\\", "\\\\").replace("\"", "\\\"")
 
 android {
     namespace "br.com.autonome.app"
@@ -22,7 +32,7 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.2.0"
-        buildConfigField "String", "AUTONOME_APP_URL", "\"${escapedAutonomeAppUrl}\""
+        buildConfigField "String", "AUTONOME_APP_URL", JsonOutput.toJson(autonomeAppUrl)
     }
 
     sourceSets {
