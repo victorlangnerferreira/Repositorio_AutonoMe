@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutonoMe - Profissionais</title>
     <script src="js/tema.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=ux3">
+    <link rel="stylesheet" href="css/style.css?v=disponibilidade1">
 </head>
 <body data-topbar="back" data-titulo="Profissões" data-sem-editar="true" data-pagina="homepage">
     <div class="app-frame">
@@ -28,7 +28,7 @@
     </div>
 
     <script src="js/api.js"></script>
-    <script src="js/menu.js?v=foto1"></script>
+    <script src="js/menu.js?v=onboard1"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
         const categoriaInformada = Number(params.get("categoria"));
@@ -146,6 +146,20 @@
                 const estrelas = "★".repeat(Math.round(avaliacao)) + "☆".repeat(5 - Math.round(avaliacao));
                 const card = document.createElement("article");
                 card.className = "card-profissional";
+                const linkPerfil = `perfil.html?usuario_id=${encodeURIComponent(profissional.id_usuario)}`;
+                card.tabIndex = 0;
+                card.setAttribute("role", "link");
+                card.setAttribute("aria-label", `Abrir perfil de ${nomeCompleto}`);
+                card.addEventListener("click", evento => {
+                    if (evento.target.closest("a, button")) return;
+                    window.location.href = linkPerfil;
+                });
+                card.addEventListener("keydown", evento => {
+                    if (evento.target === card && (evento.key === "Enter" || evento.key === " ")) {
+                        evento.preventDefault();
+                        window.location.href = linkPerfil;
+                    }
+                });
 
                 const avatar = document.createElement("div");
                 avatar.className = "avatar-prof-card";
@@ -183,7 +197,7 @@
                 agendar.style.textAlign = "center";
                 agendar.style.textDecoration = "none";
                 agendar.href = `agendamento.html?profissional_id=${encodeURIComponent(profissional.id_profissional)}&profissional=${encodeURIComponent(nomeCompleto)}`;
-                agendar.textContent = "Ver perfil e agendar";
+                agendar.textContent = "Marcar serviço";
                 card.appendChild(agendar);
                 listaProfissionais.appendChild(card);
             });

@@ -5,7 +5,7 @@ from pathlib import Path
 from io import BytesIO
 from PIL import Image, ImageOps, UnidentifiedImageError
 import bcrypt
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import re
 import secrets
 import hashlib
@@ -15,10 +15,10 @@ import os
 import string
 from zoneinfo import ZoneInfo
 
-from autonome_api.auth import exigir_login, exigir_proprio_usuario, criar_token
+from autonome_api.auth import exigir_login, exigir_proprio_usuario, criar_token, perfil_inicial_completo
 from autonome_api.database import get_db
-from autonome_api.models import Usuario, UsuarioInativo, VerificacaoEmail, Profissional, Favorito, Notificacao, Contratacao, Profissao, Categoria, Mensagem, NotaPedido, TokenRevogado
-from autonome_api.schemas import LoginSchema, DesativarContaSchema, CodigoEmailSchema, ConfirmarCadastroSchema, CadastroPFSchema, CadastroPJSchema, MensagemChatSchema, NotaPedidoSchema, ContratacaoSchema, LoginResponseSchema, CadastroResponseSchema, UsuarioPerfilSchema, UsuarioEdicaoSchema, ProfissoesProfissionalSchema
+from autonome_api.models import Usuario, UsuarioInativo, VerificacaoEmail, Profissional, Disponibilidade, Favorito, Notificacao, Contratacao, Profissao, Categoria, Mensagem, NotaPedido, TokenRevogado
+from autonome_api.schemas import LoginSchema, DesativarContaSchema, CodigoEmailSchema, ConfirmarCadastroSchema, CadastroPFSchema, CadastroPJSchema, MensagemChatSchema, NotaPedidoSchema, ContratacaoSchema, LoginResponseSchema, CadastroResponseSchema, UsuarioPerfilSchema, UsuarioEdicaoSchema, ProfissoesProfissionalSchema, ConfiguracaoInicialSchema, DisponibilidadesSchema
 from autonome_api.security import limitar_tentativas
 from autonome_api.email_service import enviar_codigo_email
 
@@ -26,10 +26,20 @@ router = APIRouter()
 PASTA_FOTOS_PERFIL = Path(__file__).resolve().parent.parent / "uploads" / "fotos_perfil"
 
 
+def _rotulo_profissao(nome: str) -> str:
+    return nome if nome.endswith("(o/a)") else f"{nome} (o/a)"
+
+
 def _hash_codigo_email(email: str, operacao: str, codigo: str) -> str:
     segredo = os.getenv("AUTONOME_SECRET_KEY", "").encode()
     conteudo = f"{email.lower()}:{operacao}:{codigo}".encode()
     return hmac.new(segredo, conteudo, hashlib.sha256).hexdigest()
+
+
+def _limite_tentativas_email_ativo() -> bool:
+    ambiente = os.getenv("AUTONOME_ENV", "development").strip().lower()
+    configuracao = os.getenv("AUTONOME_RATE_LIMIT_ENABLED", "true").strip().lower()
+    return ambiente == "production" or configuracao not in ("false", "0", "nao", "não")
 
 
 def _solicitar_codigo_email(db: Session, email: str, operacao: str, id_usuario: int | None = None, dados_pendentes: dict | None = None) -> None:
@@ -71,15 +81,17 @@ def _validar_codigo_email(db: Session, email: str, operacao: str, codigo: str, i
             db.delete(verificacao)
             db.commit()
         raise HTTPException(status_code=400, detail="Código inválido ou expirado. Solicite outro código.")
-    if verificacao.tentativas >= 5:
+    limite_ativo = _limite_tentativas_email_ativo()
+    if limite_ativo and verificacao.tentativas >= 5:
         db.delete(verificacao)
         db.commit()
         raise HTTPException(status_code=429, detail="Limite de tentativas atingido. Solicite outro código.")
     esperado = _hash_codigo_email(email, operacao, codigo)
     if not hmac.compare_digest(verificacao.codigo_hash, esperado):
-        verificacao.tentativas += 1
-        if verificacao.tentativas >= 5:
-            db.delete(verificacao)
+        if limite_ativo:
+            verificacao.tentativas += 1
+            if verificacao.tentativas >= 5:
+                db.delete(verificacao)
         db.commit()
         raise HTTPException(status_code=400, detail="Código inválido ou expirado. Confira o código enviado por e-mail.")
     return verificacao
@@ -110,6 +122,23 @@ def validar_cnpj(cnpj: str) -> bool:
     d2 = 0 if r2 < 2 else 11 - r2
     return d2 == int(cnpj[13])
 
+
+def _resposta_sessao(usuario: Usuario) -> dict:
+    completa = perfil_inicial_completo(usuario)
+    return {
+        "token": criar_token(usuario),
+        "usuario": {
+            "id": usuario.id,
+            "nome": usuario.nome,
+            "email": usuario.email,
+            "tipo": usuario.tipo,
+            "estado": usuario.estado,
+            "cidade": usuario.cidade,
+            "perfil_completo": completa,
+        },
+        "redirecionar_para": "homepage.html" if completa else "completar_cadastro.html",
+    }
+
 @router.post("/login", response_model=LoginResponseSchema)
 def login(dados: LoginSchema, request: Request, db: Session = Depends(get_db)):
     limitar_tentativas(request, "login", limite=5, janela_segundos=900)
@@ -118,14 +147,7 @@ def login(dados: LoginSchema, request: Request, db: Session = Depends(get_db)):
     if not usuario or not usuario.ativo or not bcrypt.checkpw(dados.senha.encode(), usuario.senha.encode()):
         raise HTTPException(status_code=401, detail="E-mail, senha inválidos ou conta inativa")
     
-    redirecionar_para = "homepage.html"
-
-    token = criar_token(usuario)
-    return {
-        "token": token,
-        "usuario": {"id": usuario.id, "nome": usuario.nome, "email": usuario.email, "tipo": usuario.tipo},
-        "redirecionar_para": redirecionar_para
-    }
+    return _resposta_sessao(usuario)
 
 @router.post("/logout")
 def logout(request: Request, db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
@@ -159,6 +181,7 @@ def confirmar_desativacao(dados: CodigoEmailSchema, request: Request, db: Sessio
             nome=usuario.nome,
             email=usuario.email,
             documento=usuario.documento,
+            data_nascimento=usuario.data_nascimento,
             tipo_pessoa=usuario.tipo_pessoa,
             telefone=usuario.telefone,
             tipo=usuario.tipo,
@@ -196,6 +219,7 @@ def solicitar_codigo_cadastro(dados: CadastroPFSchema, request: Request, db: Ses
         "nome": dados.nome.strip(),
         "email": email,
         "documento": documento,
+        "data_nascimento": dados.data_nascimento.isoformat(),
         "telefone": dados.telefone,
         "senha_hash": bcrypt.hashpw(dados.senha.encode(), bcrypt.gensalt()).decode(),
         "tipo": dados.tipo or "cliente",
@@ -204,7 +228,7 @@ def solicitar_codigo_cadastro(dados: CadastroPFSchema, request: Request, db: Ses
     return {"ok": True, "mensagem": "Código de verificação enviado ao seu e-mail."}
 
 
-@router.post("/cadastro_pf/confirmar-codigo", response_model=CadastroResponseSchema)
+@router.post("/cadastro_pf/confirmar-codigo", response_model=LoginResponseSchema)
 def confirmar_cadastro(dados: ConfirmarCadastroSchema, request: Request, db: Session = Depends(get_db)):
     limitar_tentativas(request, "confirmar_cadastro", limite=10, janela_segundos=3600)
     email = str(dados.email).strip().lower()
@@ -222,7 +246,8 @@ def confirmar_cadastro(dados: ConfirmarCadastroSchema, request: Request, db: Ses
 
     novo_usuario = Usuario(
         nome=cadastro["nome"], email=email, documento=documento, tipo_pessoa="PF",
-        telefone=cadastro["telefone"], senha=cadastro["senha_hash"], tipo=cadastro["tipo"],
+        data_nascimento=date.fromisoformat(cadastro["data_nascimento"]),
+        telefone=cadastro["telefone"], senha=cadastro["senha_hash"], tipo=cadastro["tipo"], cadastro_configurado=False,
     )
     db.add(novo_usuario)
     db.flush()
@@ -230,7 +255,7 @@ def confirmar_cadastro(dados: ConfirmarCadastroSchema, request: Request, db: Ses
         db.add(Profissional(id_usuario=novo_usuario.id))
     db.delete(verificacao)
     db.commit()
-    return {"id": novo_usuario.id, "nome": novo_usuario.nome, "email": novo_usuario.email, "tipo": novo_usuario.tipo}
+    return _resposta_sessao(novo_usuario)
 
 
 @router.post("/cadastro_pf")
@@ -265,7 +290,7 @@ def solicitar_codigo_cadastro_pj(dados: CadastroPJSchema, request: Request, db: 
     return {"ok": True, "mensagem": "Código de verificação enviado ao seu e-mail."}
 
 
-@router.post("/cadastro_pj/confirmar-codigo", response_model=CadastroResponseSchema)
+@router.post("/cadastro_pj/confirmar-codigo", response_model=LoginResponseSchema)
 def confirmar_cadastro_pj(dados: ConfirmarCadastroSchema, request: Request, db: Session = Depends(get_db)):
     limitar_tentativas(request, "confirmar_cadastro", limite=10, janela_segundos=3600)
     email = str(dados.email).strip().lower()
@@ -283,7 +308,7 @@ def confirmar_cadastro_pj(dados: ConfirmarCadastroSchema, request: Request, db: 
 
     novo_usuario = Usuario(
         nome=cadastro["nome"], email=email, documento=documento, tipo_pessoa="PJ",
-        telefone=cadastro["telefone"], senha=cadastro["senha_hash"], tipo=cadastro["tipo"],
+        telefone=cadastro["telefone"], senha=cadastro["senha_hash"], tipo=cadastro["tipo"], cadastro_configurado=False,
     )
     db.add(novo_usuario)
     db.flush()
@@ -291,7 +316,7 @@ def confirmar_cadastro_pj(dados: ConfirmarCadastroSchema, request: Request, db: 
         db.add(Profissional(id_usuario=novo_usuario.id))
     db.delete(verificacao)
     db.commit()
-    return {"id": novo_usuario.id, "nome": novo_usuario.nome, "email": novo_usuario.email, "tipo": novo_usuario.tipo}
+    return _resposta_sessao(novo_usuario)
 
 
 @router.post("/cadastro_pj")
@@ -304,7 +329,7 @@ def listar_categorias(db: Session = Depends(get_db)):
     categorias = db.query(Categoria).all()
     resultado = []
     for c in categorias:
-        profissoes_lista = [{"id_profissao": p.id, "nome": p.nome} for p in c.profissoes]
+        profissoes_lista = [{"id_profissao": p.id, "nome": _rotulo_profissao(p.nome)} for p in c.profissoes]
         resultado.append({
             "id_categoria": c.id,
             "nome": c.nome,
@@ -317,17 +342,22 @@ def listar_categorias(db: Session = Depends(get_db)):
 @router.get("/categorias/{id_categoria}/profissoes")
 def listar_profissoes_categoria(id_categoria: int, db: Session = Depends(get_db)):
     profissoes = db.query(Profissao).filter(Profissao.id_categoria == id_categoria).all()
-    return [{"id_profissao": p.id, "nome": p.nome, "id_categoria": p.id_categoria} for p in profissoes]
+    return [{"id_profissao": p.id, "nome": _rotulo_profissao(p.nome), "id_categoria": p.id_categoria} for p in profissoes]
 
 @router.get("/profissionais")
 def listar_profissionais(profissao: int = None, db: Session = Depends(get_db)):
-    query = db.query(Profissional)
+    query = db.query(Profissional).join(Usuario).filter(
+        Usuario.ativo.is_(True),
+        Usuario.tipo == "profissional",
+        Profissional.preco_hora > 0,
+        Profissional.profissoes.any(),
+    )
     if profissao:
         query = query.join(Profissional.profissoes).filter(Profissao.id == profissao)
     profissionais = query.all()
     resultado = []
     for p in profissionais:
-        profissoes_nomes = [prof.nome for prof in p.profissoes] if p.profissoes else []
+        profissoes_nomes = [_rotulo_profissao(prof.nome) for prof in p.profissoes] if p.profissoes else []
         primeira_prof = p.profissoes[0] if p.profissoes else None
         id_prof_val = primeira_prof.id if primeira_prof else None
         cat_nome = primeira_prof.categoria_rel.nome if (primeira_prof and primeira_prof.categoria_rel) else None
@@ -335,6 +365,8 @@ def listar_profissionais(profissao: int = None, db: Session = Depends(get_db)):
             "id_profissional": p.id,
             "id_usuario": p.id_usuario,
             "nome": p.usuario_rel.nome if p.usuario_rel else "Profissional",
+            "cidade": p.usuario_rel.cidade if p.usuario_rel else None,
+            "estado": p.usuario_rel.estado if p.usuario_rel else None,
             "foto": f"/usuarios/{p.id_usuario}/foto" if p.usuario_rel and p.usuario_rel.foto else None,
             "media_avaliacao": float(p.media_avaliacao or 0),
             "preco_hora": float(p.preco_hora or 0),
@@ -355,17 +387,159 @@ def minhas_profissoes(db: Session = Depends(get_db), usuario: Usuario = Depends(
     return [profissao.id for profissao in profissional.profissoes]
 
 
+@router.get("/profissionais/me/configuracao")
+def configuracao_profissional(db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
+    profissional = db.query(Profissional).filter(Profissional.id_usuario == usuario.id).first()
+    if usuario.tipo != "profissional":
+        raise HTTPException(status_code=403, detail="Esta configuração é exclusiva para contas profissionais.")
+    return {
+        "ids_profissoes": [profissao.id for profissao in profissional.profissoes] if profissional else [],
+        "preco_hora": float(profissional.preco_hora) if profissional and profissional.preco_hora is not None else None,
+        "descricao": profissional.descricao if profissional else None,
+        "experiencia": profissional.experiencia if profissional else None,
+    }
+
+
 @router.put("/profissionais/me/profissoes")
 def atualizar_minhas_profissoes(dados: ProfissoesProfissionalSchema, db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
     profissional = db.query(Profissional).filter(Profissional.id_usuario == usuario.id).first()
-    if usuario.tipo != "profissional" or not profissional:
+    if usuario.tipo != "profissional":
         raise HTTPException(status_code=403, detail="Esta configuração é exclusiva para contas profissionais.")
     profissoes = db.query(Profissao).filter(Profissao.id.in_(dados.ids_profissoes)).all()
     if len(profissoes) != len(dados.ids_profissoes):
         raise HTTPException(status_code=400, detail="Uma ou mais profissões não existem no catálogo.")
+    if not profissional:
+        profissional = Profissional(id_usuario=usuario.id)
+        db.add(profissional)
     profissional.profissoes = profissoes
+    if dados.preco_hora is not None:
+        profissional.preco_hora = dados.preco_hora
+    if dados.descricao is not None:
+        profissional.descricao = dados.descricao.strip() or None
+    if dados.experiencia is not None:
+        profissional.experiencia = dados.experiencia.strip() or None
     db.commit()
-    return {"ids_profissoes": [profissao.id for profissao in profissional.profissoes]}
+    return {
+        "ids_profissoes": [profissao.id for profissao in profissional.profissoes],
+        "preco_hora": float(profissional.preco_hora) if profissional.preco_hora is not None else None,
+        "descricao": profissional.descricao,
+        "experiencia": profissional.experiencia,
+    }
+
+
+@router.get("/profissionais/me/disponibilidades")
+def minhas_disponibilidades(db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
+    if usuario.tipo != "profissional":
+        raise HTTPException(status_code=403, detail="Esta configuração é exclusiva para contas profissionais.")
+    profissional = db.query(Profissional).filter(Profissional.id_usuario == usuario.id).first()
+    if not profissional:
+        return []
+    horarios = db.query(Disponibilidade).filter(Disponibilidade.id_profissional == profissional.id).order_by(
+        Disponibilidade.dia_semana, Disponibilidade.horario
+    ).all()
+    return [{"dia_semana": item.dia_semana, "horario": item.horario.strftime("%H:%M")} for item in horarios]
+
+
+@router.put("/profissionais/me/disponibilidades")
+def salvar_disponibilidades(dados: DisponibilidadesSchema, db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
+    if usuario.tipo != "profissional":
+        raise HTTPException(status_code=403, detail="Esta configuração é exclusiva para contas profissionais.")
+    profissional = db.query(Profissional).filter(Profissional.id_usuario == usuario.id).first()
+    if not profissional or not profissional.profissoes or not profissional.preco_hora or profissional.preco_hora <= 0:
+        raise HTTPException(status_code=409, detail="Publique seus serviços antes de cadastrar horários.")
+    db.query(Disponibilidade).filter(Disponibilidade.id_profissional == profissional.id).delete(synchronize_session=False)
+    for item in dados.horarios:
+        db.add(Disponibilidade(
+            id_profissional=profissional.id,
+            dia_semana=item.dia_semana,
+            horario=datetime.strptime(item.horario, "%H:%M").time(),
+        ))
+    db.commit()
+    return [{"dia_semana": item.dia_semana, "horario": item.horario} for item in dados.horarios]
+
+
+@router.get("/profissionais/{id_profissional}/disponibilidades")
+def disponibilidades_profissional(id_profissional: int, data_servico: date | None = None, db: Session = Depends(get_db)):
+    profissional = db.query(Profissional).join(Usuario).filter(
+        Profissional.id == id_profissional,
+        Usuario.ativo.is_(True),
+        Usuario.tipo == "profissional",
+    ).first()
+    if not profissional:
+        raise HTTPException(status_code=404, detail="Profissional não encontrado.")
+    if not profissional.profissoes or not profissional.preco_hora or profissional.preco_hora <= 0:
+        raise HTTPException(status_code=404, detail="Esse profissional ainda não publicou serviços.")
+    consulta = db.query(Disponibilidade).filter(Disponibilidade.id_profissional == profissional.id)
+    if data_servico:
+        dia_semana = (data_servico.weekday() + 1) % 7
+        consulta = consulta.filter(Disponibilidade.dia_semana == dia_semana)
+        ocupados = {
+            item[0].strftime("%H:%M") for item in db.query(Contratacao.horario).filter(
+                Contratacao.id_profissional == profissional.id,
+                Contratacao.data_servico == data_servico,
+            ).all()
+        }
+    else:
+        ocupados = set()
+    horarios = consulta.order_by(Disponibilidade.horario).all()
+    return [{
+        "dia_semana": item.dia_semana,
+        "horario": item.horario.strftime("%H:%M"),
+    } for item in horarios if item.horario.strftime("%H:%M") not in ocupados]
+
+
+@router.get("/usuarios/me/configuracao-inicial")
+def obter_configuracao_inicial(db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
+    profissional = db.query(Profissional).filter(Profissional.id_usuario == usuario.id).first()
+    return {
+        "id": usuario.id,
+        "nome": usuario.nome,
+        "tipo": usuario.tipo,
+        "estado": usuario.estado,
+        "cidade": usuario.cidade,
+        "perfil_completo": perfil_inicial_completo(usuario),
+        "ids_profissoes": [profissao.id for profissao in profissional.profissoes] if profissional else [],
+        "preco_hora": float(profissional.preco_hora) if profissional and profissional.preco_hora is not None else None,
+    }
+
+
+@router.put("/usuarios/me/configuracao-inicial")
+def salvar_configuracao_inicial(dados: ConfiguracaoInicialSchema, db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
+    usuario.estado = dados.estado
+    usuario.cidade = dados.cidade
+
+    if usuario.tipo == "profissional":
+        if not dados.ids_profissoes or dados.preco_hora is None:
+            raise HTTPException(status_code=400, detail="Selecione pelo menos um serviço e informe sua taxa por hora.")
+        profissoes = db.query(Profissao).filter(Profissao.id.in_(dados.ids_profissoes)).all()
+        if len(profissoes) != len(dados.ids_profissoes):
+            raise HTTPException(status_code=400, detail="Uma ou mais profissões não existem no catálogo.")
+        profissional = db.query(Profissional).filter(Profissional.id_usuario == usuario.id).first()
+        if not profissional:
+            profissional = Profissional(id_usuario=usuario.id)
+            db.add(profissional)
+        profissional.profissoes = profissoes
+        profissional.preco_hora = dados.preco_hora
+
+    usuario.cadastro_configurado = True
+    db.commit()
+    db.refresh(usuario)
+    return {
+        "id": usuario.id,
+        "estado": usuario.estado,
+        "cidade": usuario.cidade,
+        "perfil_completo": perfil_inicial_completo(usuario),
+    }
+
+
+@router.post("/usuarios/me/tornar-profissional")
+def tornar_profissional(db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
+    if usuario.tipo != "cliente":
+        raise HTTPException(status_code=409, detail="Somente contas de contratante podem iniciar esta mudança.")
+    usuario.tipo = "profissional"
+    usuario.cadastro_configurado = False
+    db.commit()
+    return {"id": usuario.id, "tipo": usuario.tipo, "redirecionar_para": "completar_cadastro.html"}
 
 @router.get("/favoritos/{id_cliente}")
 def listar_favoritos(id_cliente: int, db: Session = Depends(get_db), usuario: Usuario = Depends(exigir_login)):
@@ -375,7 +549,7 @@ def listar_favoritos(id_cliente: int, db: Session = Depends(get_db), usuario: Us
     for f in favs:
         p = f.profissional_rel
         if p and p.usuario_rel:
-            profissoes_nomes = [prof.nome for prof in p.profissoes] if p.profissoes else []
+            profissoes_nomes = [_rotulo_profissao(prof.nome) for prof in p.profissoes] if p.profissoes else []
             resultado.append({
                 "id_favorito": f.id,
                 "id_profissional": p.id,
@@ -525,17 +699,22 @@ def obter_usuario(id_usuario: int, db: Session = Depends(get_db), usuario_logado
     profissional = perfil.profissional_rel
     return {
         "id": perfil.id,
+        "id_profissional": profissional.id if profissional else None,
         "nome": perfil.nome,
         "foto": f"/usuarios/{perfil.id}/foto" if perfil.foto else None,
         "email": perfil.email if usuario_logado.id == perfil.id else None,
         "telefone": perfil.telefone if usuario_logado.id == perfil.id else None,
         "tipo": perfil.tipo,
         "tipo_pessoa": perfil.tipo_pessoa,
+        "data_nascimento": perfil.data_nascimento if usuario_logado.id == perfil.id else None,
+        "estado": perfil.estado if usuario_logado.id == perfil.id or perfil.tipo == "profissional" else None,
+        "cidade": perfil.cidade if usuario_logado.id == perfil.id or perfil.tipo == "profissional" else None,
         "data_cadastro": perfil.data_cadastro,
-        "ocupacao": ", ".join(p.nome for p in profissional.profissoes) if profissional and profissional.profissoes else ("Profissional" if profissional else "Cliente / Contratante"),
+        "ocupacao": ", ".join(_rotulo_profissao(p.nome) for p in profissional.profissoes) if profissional and profissional.profissoes else ("Profissional" if perfil.tipo == "profissional" else "Cliente / Contratante"),
         "sobre": profissional.descricao if profissional and profissional.descricao else "Usuário cadastrado na plataforma AutonoMe.",
         "preco_hora": float(profissional.preco_hora or 0) if profissional else None,
         "experiencia": profissional.experiencia if profissional else None,
+        "tem_servicos": bool(profissional and profissional.profissoes and profissional.preco_hora and profissional.preco_hora > 0),
     }
 
 
@@ -586,7 +765,7 @@ def criar_contratacao(dados: ContratacaoSchema, db: Session = Depends(get_db), u
     exigir_proprio_usuario(usuario, dados.cliente_id)
     cliente = db.query(Usuario).filter(Usuario.id == dados.cliente_id, Usuario.ativo.is_(True)).first()
     profissional = db.query(Profissional).filter(Profissional.id == dados.profissional_id).first()
-    if (not cliente or cliente.tipo != "cliente" or not profissional
+    if (not cliente or cliente.tipo not in ("cliente", "profissional") or not profissional
             or not profissional.usuario_rel or not profissional.usuario_rel.ativo
             or profissional.id_usuario == cliente.id):
         raise HTTPException(status_code=400, detail="Cliente ou profissional inválido")
@@ -597,6 +776,21 @@ def criar_contratacao(dados: ContratacaoSchema, db: Session = Depends(get_db), u
         raise HTTPException(status_code=400, detail="Data ou horário inválido")
     if data_servico < datetime.now(ZoneInfo("America/Sao_Paulo")).date():
         raise HTTPException(status_code=400, detail="A data do serviÃ§o nÃ£o pode estar no passado")
+    dia_semana = (data_servico.weekday() + 1) % 7
+    horario_disponivel = db.query(Disponibilidade).filter(
+        Disponibilidade.id_profissional == profissional.id,
+        Disponibilidade.dia_semana == dia_semana,
+        Disponibilidade.horario == horario,
+    ).first()
+    if not horario_disponivel:
+        raise HTTPException(status_code=409, detail="Esse profissional não oferece atendimento neste dia e horário.")
+    horario_ocupado = db.query(Contratacao).filter(
+        Contratacao.id_profissional == profissional.id,
+        Contratacao.data_servico == data_servico,
+        Contratacao.horario == horario,
+    ).first()
+    if horario_ocupado:
+        raise HTTPException(status_code=409, detail="Esse horário acabou de ser reservado. Escolha outro.")
     contratacao = Contratacao(
         id_cliente=cliente.id,
         id_profissional=profissional.id,

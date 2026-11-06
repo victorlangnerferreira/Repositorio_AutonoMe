@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutonoMe - Perfil</title>
     <script src="js/tema.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=ux3">
+    <link rel="stylesheet" href="css/style.css?v=disponibilidade1">
 </head>
 <body data-topbar="back" data-titulo="Perfil" data-sem-editar="true" data-pagina="perfil">
     <div class="app-frame">
@@ -24,10 +24,15 @@
                         <label>Contatos</label>
                         <p>E-mail: <span id="perfil-email">usuario@autonome.com</span></p>
                         <p>Telefone: <span id="perfil-telefone">(11) 99999-9999</span></p>
+                        <p id="linha-data-nascimento" hidden>Data de nascimento: <span id="perfil-data-nascimento"></span></p>
                     </div>
 
                     <a href="editar_perfil.html" id="btn-editar-perfil" class="btn-submit" hidden>Editar Perfil</a>
-                    <a href="configurar_servicos.html" id="btn-configurar-servicos" class="btn-submit" hidden>Configurar serviços</a>
+                    <button type="button" id="btn-tornar-profissional" class="btn-submit" hidden>Quero oferecer serviços</button>
+                    <a href="configurar_servicos.html" id="btn-publicar-servicos" class="btn-submit" hidden>Disponibilizar serviços</a>
+                    <a href="configurar_servicos.html" id="btn-editar-servicos" class="btn-submit" hidden>Editar serviços</a>
+                    <a href="#" id="btn-agendar-servico" class="btn-submit" hidden>Marcar serviço</a>
+                    <p id="mensagem-tornar-profissional" class="form-feedback" role="status" aria-live="polite"></p>
                     <a href="historico.html" class="btn-submit">Ver Histórico</a>
                 </div>
 
@@ -53,8 +58,8 @@
         <div id="bottombar-placeholder"></div>
     </div>
 
-    <script src="js/api.js"></script>
-    <script src="js/menu.js?v=foto1"></script>
+    <script src="js/api.js?v=prestador1"></script>
+    <script src="js/menu.js?v=onboard1"></script>
     <script>
         async function carregarPerfil() {
             const parametros = new URLSearchParams(window.location.search);
@@ -71,30 +76,74 @@
             }
 
             try {
-                const usuario = await buscarUsuario(idUsuario);
-                if (usuarioSalvo && Number(usuarioSalvo.id) === Number(idUsuario)) {
+                const [usuario, contaLogada] = await Promise.all([
+                    buscarUsuario(idUsuario),
+                    usuarioSalvo ? obterConfiguracaoInicial() : Promise.resolve(null),
+                ]);
+                const ehMeuPerfil = Boolean(contaLogada && Number(contaLogada.id) === Number(idUsuario));
+                if (ehMeuPerfil) {
                     document.getElementById("btn-editar-perfil").hidden = false;
-                    if (usuario.tipo === "profissional") {
-                        document.getElementById("btn-configurar-servicos").hidden = false;
+                    if (contaLogada.tipo === "cliente") {
+                        document.getElementById("btn-tornar-profissional").hidden = false;
+                    } else if (contaLogada.tipo === "profissional") {
+                        const botaoServicos = document.getElementById(usuario.tem_servicos ? "btn-editar-servicos" : "btn-publicar-servicos");
+                        botaoServicos.hidden = false;
                     }
+                }
+                if (!ehMeuPerfil && ["cliente", "profissional"].includes(contaLogada?.tipo) && usuario.tipo === "profissional" && usuario.tem_servicos && usuario.id_profissional) {
+                    const botaoAgendar = document.getElementById("btn-agendar-servico");
+                    botaoAgendar.href = `agendamento.html?profissional_id=${encodeURIComponent(usuario.id_profissional)}&profissional=${encodeURIComponent(usuario.nome)}`;
+                    botaoAgendar.hidden = false;
                 }
                 document.getElementById("perfil-nome").textContent = usuario.nome;
                 document.getElementById("perfil-email").textContent = usuario.email || "Não informado";
                 document.getElementById("perfil-telefone").textContent = usuario.telefone || "Não informado";
+                if (ehMeuPerfil && usuario.data_nascimento) {
+                    const dataNascimento = new Date(`${usuario.data_nascimento}T00:00:00`);
+                    document.getElementById("perfil-data-nascimento").textContent = dataNascimento.toLocaleDateString("pt-BR");
+                    document.getElementById("linha-data-nascimento").hidden = false;
+                }
                 document.getElementById("perfil-ocupacao").textContent = usuario.ocupacao;
                 document.getElementById("perfil-sobre").textContent = usuario.sobre;
-                document.getElementById("perfil-local").textContent = usuario.tipo_pessoa === "PJ" ? "Pessoa Jurídica" : "Pessoa Física";
+                document.getElementById("perfil-local").textContent = usuario.cidade && usuario.estado
+                    ? `${usuario.cidade}, ${usuario.estado}`
+                    : "Localização não informada";
                 const avatarPerfil = document.getElementById("perfil-avatar");
                 avatarPerfil.dataset.avatarUsuarioId = usuario.id;
                 mostrarAvatar(avatarPerfil, usuario.nome, usuario.foto);
 
-                const historico = await buscarContratacoes(idUsuario);
-                const recentes = historico.slice(0, 3).map(item => `${item.status}: ${item.profissional_nome}`).join(" · ");
-                document.getElementById("perfil-servicos").textContent = recentes || "Nenhum pedido registrado.";
+                if (ehMeuPerfil) {
+                    const historico = await buscarContratacoes(idUsuario);
+                    const recentes = historico.slice(0, 3).map(item => `${item.status}: ${item.profissional_nome}`).join(" · ");
+                    document.getElementById("perfil-servicos").textContent = recentes || "Nenhum pedido registrado.";
+                } else {
+                    document.getElementById("perfil-servicos").closest(".perfil-secao").hidden = true;
+                }
             } catch (erro) {
                 document.getElementById("perfil-nome").textContent = "Não foi possível carregar o perfil";
             }
         }
+
+        document.getElementById("btn-tornar-profissional").addEventListener("click", async function () {
+            const confirmado = window.confirm("Seu perfil passará a oferecer serviços. Você continuará podendo contratar serviços também. Quer continuar?");
+            if (!confirmado) return;
+            const botao = this;
+            const mensagem = document.getElementById("mensagem-tornar-profissional");
+            botao.disabled = true;
+            mensagem.textContent = "Preparando seu perfil de prestador...";
+            try {
+                const resultado = await tornarProfissional();
+                const sessao = JSON.parse(localStorage.getItem("usuario") || "null");
+                if (sessao) {
+                    sessao.tipo = resultado.tipo;
+                    localStorage.setItem("usuario", JSON.stringify(sessao));
+                }
+                window.location.replace(resultado.redirecionar_para || "completar_cadastro.html");
+            } catch (erro) {
+                mensagem.textContent = erro.message || "Não foi possível iniciar seu perfil de prestador.";
+                botao.disabled = false;
+            }
+        });
 
         carregarPerfil();
     </script>

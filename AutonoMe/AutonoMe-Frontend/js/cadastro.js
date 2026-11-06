@@ -4,14 +4,32 @@ let tipoContaAtual = "cliente";
         const botaoProfissional = document.getElementById("btn-profissional");
         const mensagemErro = document.getElementById("mensagem-erro");
         const campoCpf = document.getElementById("cpf");
+        const campoDataNascimento = document.getElementById("data-nascimento");
+        const hoje = new Date();
+        campoDataNascimento.max = new Date(hoje.getTime() - hoje.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
         const campoTelefone = document.getElementById("telefone");
+        const campoSenhaCadastro = document.getElementById("senha");
         const campoCodigoCadastro = document.getElementById("codigo-cadastro");
         const areaVerificacaoCadastro = document.getElementById("verificacao-cadastro");
         const botaoConfirmarCadastro = document.getElementById("btn-confirmar");
         const botaoEditarCadastro = document.getElementById("btn-editar-cadastro");
-        const camposCadastro = ["nome", "email", "cpf", "telefone", "senha", "confirmar"]
+        const camposCadastro = ["nome", "email", "cpf", "data-nascimento", "telefone", "senha", "confirmar"]
             .map(id => document.getElementById(id));
         let codigoCadastroEnviado = false;
+
+        function mensagemSenhaInvalida(senha) {
+            if (senha.length < 8) return "Use pelo menos 8 caracteres.";
+            if (new TextEncoder().encode(senha).length > 72) return "A senha deve ter no máximo 72 bytes.";
+            if (!/[A-Z]/.test(senha)) return "Inclua uma letra maiúscula.";
+            if (!/[a-z]/.test(senha)) return "Inclua uma letra minúscula.";
+            if (!/[0-9]/.test(senha)) return "Inclua um número.";
+            if (!/[^A-Za-z0-9\s]/.test(senha)) return "Inclua um símbolo, como ! ou #.";
+            return "";
+        }
+
+        campoSenhaCadastro.addEventListener("input", function () {
+            campoSenhaCadastro.setCustomValidity(mensagemSenhaInvalida(campoSenhaCadastro.value));
+        });
 
         campoCodigoCadastro.addEventListener("input", function () {
             campoCodigoCadastro.value = campoCodigoCadastro.value.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase();
@@ -99,9 +117,10 @@ let tipoContaAtual = "cliente";
             if (codigoCadastroEnviado) {
                 botaoConfirmarCadastro.disabled = true;
                 try {
-                    await confirmarCadastro(document.getElementById("email").value.trim(), campoCodigoCadastro.value);
-                    alert("E-mail confirmado! Conta criada. Agora entre com seu e-mail e senha.");
-                    window.location.href = "login.html";
+                    const sessao = await confirmarCadastro(document.getElementById("email").value.trim(), campoCodigoCadastro.value);
+                    localStorage.setItem("token", sessao.token);
+                    localStorage.setItem("usuario", JSON.stringify(sessao.usuario));
+                    window.location.replace(sessao.redirecionar_para || "completar_cadastro.html");
                 } catch (erro) {
                     mensagemErro.textContent = erro.message || "Não foi possível confirmar o código.";
                     mensagemErro.style.display = "block";
@@ -114,6 +133,7 @@ let tipoContaAtual = "cliente";
                 nome: document.getElementById("nome").value.trim(),
                 email: document.getElementById("email").value.trim(),
                 cpf: campoCpf.value,
+                data_nascimento: campoDataNascimento.value,
                 telefone: campoTelefone.value,
                 senha: document.getElementById("senha").value,
                 confirmacao_senha: document.getElementById("confirmar").value,

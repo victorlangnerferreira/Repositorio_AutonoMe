@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutonoMe - Inicial</title>
     <script src="js/tema.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=ux3">
+    <link rel="stylesheet" href="css/style.css?v=booking1">
 </head>
 <body data-topbar="default" data-pagina="homepage">
     <div class="app-frame">
@@ -34,7 +34,7 @@
     </div>
 
     <script src="js/api.js"></script>
-    <script src="js/menu.js?v=foto1"></script>
+    <script src="js/menu.js?v=onboard1"></script>
     <script>
         function mostrarEstado(container, mensagem, tipo, tentarNovamente) {
             container.replaceChildren();
@@ -133,15 +133,26 @@
 
                 grid.replaceChildren();
                 grid.setAttribute("aria-busy", "false");
+                const sessaoAtual = JSON.parse(localStorage.getItem("usuario") || "null");
                 profissionais.slice(0, 6).forEach(profissional => {
-                    const linkPerfil = document.createElement("a");
-                    linkPerfil.className = "card-profissional-link";
-                    linkPerfil.href = `perfil.html?usuario_id=${encodeURIComponent(profissional.id_usuario)}`;
-                    linkPerfil.setAttribute("aria-label", `Abrir perfil de ${profissional.nome || "profissional"}`);
                     const card = document.createElement("article");
                     card.className = "card-profissional";
 
                     const nomeCompleto = profissional.nome || "Profissional AutonoMe";
+                    const linkPerfil = `perfil.html?usuario_id=${encodeURIComponent(profissional.id_usuario)}`;
+                    card.tabIndex = 0;
+                    card.setAttribute("role", "link");
+                    card.setAttribute("aria-label", `Abrir perfil de ${nomeCompleto}`);
+                    card.addEventListener("click", evento => {
+                        if (evento.target.closest("a, button")) return;
+                        window.location.href = linkPerfil;
+                    });
+                    card.addEventListener("keydown", evento => {
+                        if (evento.target === card && (evento.key === "Enter" || evento.key === " ")) {
+                            evento.preventDefault();
+                            window.location.href = linkPerfil;
+                        }
+                    });
                     const avatar = document.createElement("div");
                     avatar.className = "avatar-prof-card";
                     avatar.setAttribute("aria-hidden", "true");
@@ -155,6 +166,12 @@
                     ocupacao.textContent = Array.isArray(profissional.profissoes) && profissional.profissoes.length
                         ? profissional.profissoes.join(" · ")
                         : (profissional.categoria || "Profissional autônomo");
+
+                    const localizacao = document.createElement("p");
+                    localizacao.className = "card-prof-exp";
+                    localizacao.textContent = profissional.cidade && profissional.estado
+                        ? `📍 ${profissional.cidade}, ${profissional.estado}`
+                        : "Localização não informada";
 
                     const avaliacao = Number(profissional.media_avaliacao);
                     const rating = document.createElement("p");
@@ -175,10 +192,19 @@
                         preco.textContent = `${Number(profissional.preco_hora).toLocaleString("pt-BR", { style: "currency", currency: "BRL"})}/hora`;
                     }
 
-                    card.append(avatar, nome, ocupacao, experiencia, rating);
+                    card.append(avatar, nome, ocupacao, localizacao, experiencia, rating);
                     if (preco.textContent) card.appendChild(preco);
-                    linkPerfil.appendChild(card);
-                    grid.appendChild(linkPerfil);
+                    if (["cliente", "profissional"].includes(sessaoAtual?.tipo)) {
+                        const agendar = document.createElement("a");
+                        agendar.className = "btn-submit";
+                        agendar.style.margin = "auto 0 0";
+                        agendar.style.width = "100%";
+                        agendar.style.textDecoration = "none";
+                        agendar.href = `agendamento.html?profissional_id=${encodeURIComponent(profissional.id_profissional)}&profissional=${encodeURIComponent(nomeCompleto)}`;
+                        agendar.textContent = "Marcar serviço";
+                        card.appendChild(agendar);
+                    }
+                    grid.appendChild(card);
                 });
             } catch (erro) {
                 mostrarEstado(grid, "Não foi possível carregar os profissionais. Confira a conexão com a API.", "erro", carregarProfissionais);

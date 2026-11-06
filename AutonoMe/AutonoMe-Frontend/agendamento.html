@@ -25,40 +25,15 @@
                     <label for="data-servico">Data do serviço</label>
                     <input id="data-servico" type="date" required>
                     <label for="horario-servico">Horário</label>
-                    <select id="horario-servico">
-                        <option value="08:00">08:00</option>
-                        <option value="14:00">14:00</option>
-                        <option value="16:00">16:00</option>
+                    <select id="horario-servico" required disabled>
+                        <option value="">Escolha uma data primeiro</option>
                     </select>
+                    <p id="msg-horarios" class="mensagem-erro" role="status" aria-live="polite"></p>
                     <label for="endereco-servico">Endereço do serviço</label>
                     <input id="endereco-servico" type="text" maxlength="255" placeholder="Rua, número, bairro" required>
                 </div>
 
-                <div class="agenda-dias">
-                    <span class="dia-cabecalho">Dom</span>
-                    <span class="dia-cabecalho">Seg</span>
-                    <span class="dia-cabecalho">Ter</span>
-                    <span class="dia-cabecalho">Qua</span>
-                    <span class="dia-cabecalho">Qui</span>
-                    <span class="dia-cabecalho">Sex</span>
-                    <span class="dia-cabecalho">Sáb</span>
-
-                    <span class="agenda-horario livre">08:00</span>
-                    <span class="agenda-horario ocupado">08:00</span>
-                    <span class="agenda-horario livre">08:00</span>
-                    <span class="agenda-horario livre">08:00</span>
-                    <span class="agenda-horario ocupado">08:00</span>
-                    <span class="agenda-horario livre">08:00</span>
-                    <span class="agenda-horario livre">08:00</span>
-
-                    <span class="agenda-horario ocupado">14:00</span>
-                    <span class="agenda-horario livre">14:00</span>
-                    <span class="agenda-horario livre">14:00</span>
-                    <span class="agenda-horario ocupado">14:00</span>
-                    <span class="agenda-horario livre">14:00</span>
-                    <span class="agenda-horario livre">14:00</span>
-                    <span class="agenda-horario ocupado">14:00</span>
-                </div>
+                <p class="servicos-instrucao">Os horários exibidos são os que o prestador marcou como disponíveis para essa data.</p>
 
                 <button id="btn-contratar" class="btn-submit">Contratar Serviço</button>
 
@@ -70,35 +45,17 @@
         <div id="bottombar-placeholder"></div>
     </div>
 
-    <script src="js/api.js"></script>
-    <script src="js/menu.js?v=foto1"></script>
-    <script src="js/agendamento.js"></script>
+    <script src="js/api.js?v=disponibilidade1"></script>
+    <script src="js/menu.js?v=onboard1"></script>
+    <script src="js/agendamento.js?v=booking2"></script>
     <script>
         const nomeProfissional = new URLSearchParams(window.location.search).get("profissional");
         if (nomeProfissional) {
-            const nomeDecod = decodeURIComponent(nomeProfissional);
-            document.getElementById("nome-profissional").textContent = nomeDecod;
-            const partes = nomeDecod.split(" ");
+            document.getElementById("nome-profissional").textContent = nomeProfissional;
+            const partes = nomeProfissional.split(" ");
             const iniciais = partes.length > 1 ? (partes[0][0] + partes[1][0]).toUpperCase() : partes[0].substring(0, 2).toUpperCase();
             document.getElementById("avatar-profissional").textContent = iniciais;
         }
-
-        const btnContratar = document.getElementById("btn-contratar");
-        const msgCarregando = document.getElementById("msg-carregando");
-        const msgErro = document.getElementById("msg-erro");
-
-        btnContratar.addEventListener("click", function () {
-            msgErro.style.display = "none";
-            msgCarregando.style.display = "block";
-            btnContratar.disabled = true;
-
-            setTimeout(() => {
-                msgCarregando.style.display = "none";
-                btnContratar.disabled = false;
-                btnContratar.textContent = "Pedido Enviado com Sucesso!";
-                btnContratar.style.backgroundColor = "#2E7D32";
-            }, 1200);
-        });
     </script>
 </body>
 </html>

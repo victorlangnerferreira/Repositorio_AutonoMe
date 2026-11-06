@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+import os
 from threading import Lock
 from time import monotonic
 
@@ -10,6 +11,13 @@ _lock = Lock()
 
 
 def limitar_tentativas(request: Request, operacao: str, limite: int, janela_segundos: int) -> None:
+    # A opção de desenvolvimento só desativa o limite local por IP.
+    # Em produção, o limite permanece ativo mesmo que a variável esteja definida.
+    ambiente = os.getenv("AUTONOME_ENV", "development").strip().lower()
+    limite_ativo = os.getenv("AUTONOME_RATE_LIMIT_ENABLED", "true").strip().lower() not in ("false", "0", "nao", "não")
+    if ambiente != "production" and not limite_ativo:
+        return
+
     agora = monotonic()
     ip = request.client.host if request.client else "unknown"
     chave = f"{operacao}:{ip}"

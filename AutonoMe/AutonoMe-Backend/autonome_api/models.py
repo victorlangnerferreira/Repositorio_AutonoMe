@@ -12,8 +12,12 @@ class Usuario(Base):
     nome = Column(String(120), nullable=False)
     email = Column(String(120), nullable=False, unique=True)
     documento = Column(String(18), nullable=False, unique=True)
+    data_nascimento = Column(Date)
     tipo_pessoa = Column(String(2), nullable=False, default="PF")
     telefone = Column(String(20))
+    estado = Column(String(2))
+    cidade = Column(String(100))
+    cadastro_configurado = Column(Boolean, nullable=False, default=True)
     senha = Column(String(255), nullable=False)
     tipo = Column(String(20), default="cliente")
     foto = Column(String(255))
@@ -37,6 +41,7 @@ class UsuarioInativo(Base):
     nome = Column(String(120), nullable=False)
     email = Column(String(120), nullable=False)
     documento = Column(String(18), nullable=False)
+    data_nascimento = Column(Date)
     tipo_pessoa = Column(String(2), nullable=False)
     telefone = Column(String(20))
     tipo = Column(String(20), nullable=False)
@@ -107,6 +112,7 @@ class Profissional(Base):
     favoritos = relationship("Favorito", back_populates="profissional_rel")
     avaliacoes = relationship("Avaliacao", back_populates="profissional_rel")
     contratacoes = relationship("Contratacao", back_populates="profissional_rel")
+    disponibilidades = relationship("Disponibilidade", back_populates="profissional_rel", cascade="all, delete-orphan")
 
 
 class ProfissionalProfissao(Base):
@@ -114,6 +120,18 @@ class ProfissionalProfissao(Base):
 
     id_profissional = Column(Integer, ForeignKey("profissionais.id_profissional"), primary_key=True)
     id_profissao = Column(Integer, ForeignKey("profissoes.id_profissao"), primary_key=True)
+
+
+class Disponibilidade(Base):
+    __tablename__ = "disponibilidades"
+    __table_args__ = (UniqueConstraint("id_profissional", "dia_semana", "horario", name="uq_disponibilidade_profissional_dia_hora"),)
+
+    id = Column(Integer, primary_key=True)
+    id_profissional = Column(Integer, ForeignKey("profissionais.id_profissional"), nullable=False, index=True)
+    dia_semana = Column(Integer, nullable=False)
+    horario = Column(Time, nullable=False)
+
+    profissional_rel = relationship("Profissional", back_populates="disponibilidades")
 
 
 class Favorito(Base):

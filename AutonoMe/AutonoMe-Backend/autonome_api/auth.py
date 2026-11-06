@@ -36,6 +36,24 @@ def criar_token(usuario: Usuario) -> str:
     )
 
 
+def perfil_inicial_completo(usuario: Usuario) -> bool:
+    if usuario.tipo not in ("cliente", "profissional"):
+        return True
+    if usuario.cadastro_configurado:
+        return True
+    if not usuario.estado or not usuario.cidade:
+        return False
+    if usuario.tipo == "profissional":
+        profissional = usuario.profissional_rel
+        return bool(
+            profissional
+            and profissional.preco_hora
+            and profissional.preco_hora > 0
+            and profissional.profissoes
+        )
+    return True
+
+
 def exigir_login(
     request: Request,
     credenciais: HTTPAuthorizationCredentials | None = Depends(_bearer),
@@ -56,6 +74,11 @@ def exigir_login(
         raise HTTPException(status_code=401, detail="Conta inativa ou inexistente", headers={"WWW-Authenticate": "Bearer"})
     if db.query(TokenRevogado.jti).filter(TokenRevogado.jti == jti).first():
         raise HTTPException(status_code=401, detail="Sessão encerrada", headers={"WWW-Authenticate": "Bearer"})
+    if not perfil_inicial_completo(usuario) and request.url.path not in (
+        "/usuarios/me/configuracao-inicial",
+        "/logout",
+    ):
+        raise HTTPException(status_code=403, detail="Complete seu cadastro antes de continuar.")
     request.state.token_jti = jti
     request.state.token_expira_em = expira_em
     return usuario

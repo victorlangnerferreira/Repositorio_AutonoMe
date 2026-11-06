@@ -110,6 +110,31 @@ async function confirmarCadastro(email, codigo) {
     return dados;
 }
 
+async function obterConfiguracaoInicial() {
+    const resposta = await apiFetch(`${API_BASE_URL}/usuarios/me/configuracao-inicial`);
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(dados.detail || "Não foi possível carregar seus dados.");
+    return dados;
+}
+
+async function salvarConfiguracaoInicial(dadosPerfil) {
+    const resposta = await apiFetch(`${API_BASE_URL}/usuarios/me/configuracao-inicial`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dadosPerfil),
+    });
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(mensagemDaResposta(dados, "Não foi possível salvar seus dados."));
+    return dados;
+}
+
+async function tornarProfissional() {
+    const resposta = await apiFetch(`${API_BASE_URL}/usuarios/me/tornar-profissional`, { method: "POST" });
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(dados.detail || "Não foi possível iniciar seu perfil de prestador.");
+    return dados;
+}
+
 async function cadastrarPj(dadosForm) {
     const resposta = await apiFetch(`${API_BASE_URL}/cadastro_pj/solicitar-codigo`, {
         method: "POST",
@@ -154,14 +179,47 @@ async function buscarMinhasProfissoes() {
     return dados;
 }
 
-async function salvarMinhasProfissoes(idsProfissoes) {
+async function buscarConfiguracaoProfissional() {
+    const resposta = await apiFetch(`${API_BASE_URL}/profissionais/me/configuracao`);
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(dados.detail || "Não foi possível carregar seus serviços.");
+    return dados;
+}
+
+async function salvarMinhasProfissoes(idsProfissoes, precoHora, descricao, experiencia) {
     const resposta = await apiFetch(`${API_BASE_URL}/profissionais/me/profissoes`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids_profissoes: idsProfissoes }),
+        body: JSON.stringify({ ids_profissoes: idsProfissoes, preco_hora: precoHora, descricao, experiencia }),
     });
     const dados = await resposta.json();
     if (!resposta.ok) throw new Error(dados.detail || "Não foi possível salvar os serviços.");
+    return dados;
+}
+
+async function obterMinhasDisponibilidades() {
+    const resposta = await apiFetch(`${API_BASE_URL}/profissionais/me/disponibilidades`);
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(dados.detail || "Não foi possível carregar sua disponibilidade.");
+    return dados;
+}
+
+async function salvarMinhasDisponibilidades(horarios) {
+    const resposta = await apiFetch(`${API_BASE_URL}/profissionais/me/disponibilidades`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ horarios }),
+    });
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(dados.detail || "Não foi possível salvar sua disponibilidade.");
+    return dados;
+}
+
+async function buscarDisponibilidadesProfissional(idProfissional, dataServico) {
+    const params = new URLSearchParams({ data_servico: dataServico });
+    const resposta = await apiFetch(`${API_BASE_URL}/profissionais/${encodeURIComponent(idProfissional)}/disponibilidades?${params}`);
+    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(dados.detail || "Não foi possível carregar os horários disponíveis.");
     return dados;
 }
 

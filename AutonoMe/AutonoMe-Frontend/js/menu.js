@@ -1,24 +1,45 @@
 (() => {
-    let tokenValido = false;
-    try {
-        const token = localStorage.getItem("token");
-        const parte = token && token.split(".")[1];
-        if (parte) {
-            const payload = JSON.parse(atob(parte.replace(/-/g, "+").replace(/_/g, "/")));
-            tokenValido = Number(payload.exp) * 1000 > Date.now();
+    function sessaoLocalValida() {
+        let tokenValido = false;
+        try {
+            const token = localStorage.getItem("token");
+            const parte = token && token.split(".")[1];
+            if (parte) {
+                const payload = JSON.parse(atob(parte.replace(/-/g, "+").replace(/_/g, "/")));
+                tokenValido = Number(payload.exp) * 1000 > Date.now();
+            }
+        } catch (_) {
+            tokenValido = false;
         }
-    } catch (_) {
-        tokenValido = false;
+        return tokenValido;
     }
 
-    if (!tokenValido) {
-        try {
-            localStorage.removeItem("token");
-            localStorage.removeItem("usuario");
-        } catch (_) { }
+    function protegerTela() {
         document.documentElement.style.visibility = "hidden";
-        window.location.replace("login.html");
+        if (!sessaoLocalValida()) {
+            try {
+                localStorage.removeItem("token");
+                localStorage.removeItem("usuario");
+            } catch (_) { }
+            window.location.replace("login.html");
+            return;
+        }
+
+        const paginaConfiguracaoInicial = window.location.pathname.endsWith("/completar_cadastro.html");
+        let usuario = null;
+        try { usuario = JSON.parse(localStorage.getItem("usuario") || "null"); } catch (_) { }
+        if (!paginaConfiguracaoInicial && (!usuario || usuario.perfil_completo === false)) {
+            window.location.replace("completar_cadastro.html");
+            return;
+        }
+        document.documentElement.style.visibility = "";
     }
+
+    protegerTela();
+    window.addEventListener("pageshow", protegerTela);
+    window.addEventListener("pagehide", () => {
+        document.documentElement.style.visibility = "hidden";
+    });
 })();
 
 const ITENS_MENU_HAMBURGUER = [

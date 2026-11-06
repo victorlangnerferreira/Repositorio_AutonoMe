@@ -3,29 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutonoMe - Configurar serviços</title>
+    <title>AutonoMe - Meus serviços</title>
     <script src="js/tema.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=ux3">
+    <link rel="stylesheet" href="css/style.css?v=disponibilidade1">
 </head>
 <body data-topbar="back" data-titulo="Meus serviços" data-sem-editar="true" data-pagina="perfil">
     <div class="app-frame">
         <div id="topbar-placeholder"></div>
         <main class="app-conteudo">
             <section class="card-box servicos-configuracao">
-                <h1 class="titulo-secao">Quais serviços você oferece?</h1>
-                <p class="servicos-instrucao">Marque todas as profissões que você atende. Elas serão mostradas no seu perfil.</p>
+                <h1 id="titulo-servicos" class="titulo-secao">Disponibilizar meus serviços</h1>
+                <p id="instrucao-servicos" class="servicos-instrucao">Escolha o que você oferece e publique no seu perfil para que clientes encontrem você.</p>
+                <section id="resumo-servicos" class="resumo-servicos" hidden aria-live="polite">
+                    <h2>Serviços publicados</h2>
+                    <p id="resumo-profissoes"></p>
+                    <p id="resumo-preco"></p>
+                    <p id="resumo-descricao"></p>
+                </section>
+                <h2 class="subtitulo-servicos">Escolha suas profissões</h2>
+                <p class="servicos-instrucao">Marque todas as profissões que você atende. Você pode atualizar esta lista depois.</p>
                 <label class="visualmente-oculto" for="busca-servicos">Buscar profissão</label>
                 <input type="search" id="busca-servicos" class="campo-busca-servicos" placeholder="Buscar profissão..." autocomplete="off">
                 <p id="total-servicos-selecionados" class="servicos-contagem" aria-live="polite">Carregando serviços...</p>
                 <div id="lista-categorias-servicos" class="lista-categorias-servicos" aria-live="polite" aria-busy="true"></div>
-                <button type="button" id="btn-salvar-servicos" class="btn-submit" disabled>Salvar serviços</button>
+                <div class="detalhes-servico">
+                    <label for="descricao-servicos">Sobre os serviços
+                        <textarea id="descricao-servicos" maxlength="2000" rows="4" placeholder="Conte brevemente o que você oferece e como trabalha."></textarea>
+                    </label>
+                    <label for="experiencia-servicos">Experiência
+                        <input type="text" id="experiencia-servicos" maxlength="120" placeholder="Ex.: 3 anos de experiência">
+                    </label>
+                </div>
+                <label class="onboarding-taxa" for="preco-hora-servicos">Sua taxa por hora (R$)
+                    <input type="number" id="preco-hora-servicos" min="0.01" max="999999.99" step="0.01" placeholder="Ex.: 50,00" inputmode="decimal" required>
+                </label>
+                <button type="button" id="btn-salvar-servicos" class="btn-submit" disabled>Disponibilizar serviços</button>
+                <section class="disponibilidade-config" aria-labelledby="titulo-disponibilidade">
+                    <h2 id="titulo-disponibilidade">Dias e horários disponíveis</h2>
+                    <p id="instrucao-disponibilidade" class="servicos-instrucao">Publique primeiro seus serviços para depois cadastrar os dias e horários de atendimento.</p>
+                    <div id="dias-disponiveis" class="dias-disponiveis">
+                        <label><input type="checkbox" value="0"> Domingo</label>
+                        <label><input type="checkbox" value="1"> Segunda</label>
+                        <label><input type="checkbox" value="2"> Terça</label>
+                        <label><input type="checkbox" value="3"> Quarta</label>
+                        <label><input type="checkbox" value="4"> Quinta</label>
+                        <label><input type="checkbox" value="5"> Sexta</label>
+                        <label><input type="checkbox" value="6"> Sábado</label>
+                    </div>
+                    <div class="adicionar-horario">
+                        <label for="novo-horario-disponivel">Horário
+                            <input type="time" id="novo-horario-disponivel">
+                        </label>
+                        <button type="button" id="btn-adicionar-horario" class="btn-selecionar-categoria">Adicionar horário</button>
+                    </div>
+                    <ul id="lista-disponibilidades" class="lista-disponibilidades" aria-live="polite"></ul>
+                    <button type="button" id="btn-salvar-disponibilidade" class="btn-submit" disabled>Salvar disponibilidade</button>
+                    <p id="mensagem-disponibilidade" class="form-feedback" role="status" aria-live="polite"></p>
+                </section>
+                <a href="perfil.html" class="btn-secundario servicos-voltar">Voltar ao perfil</a>
                 <p id="mensagem-servicos" class="form-feedback" role="status" aria-live="polite"></p>
             </section>
         </main>
         <div id="bottombar-placeholder"></div>
     </div>
-    <script src="js/api.js?v=servicos1"></script>
-    <script src="js/menu.js?v=foto1"></script>
-    <script src="js/configurar_servicos.js?v=servicos1"></script>
+    <script src="js/api.js?v=disponibilidade1"></script>
+    <script src="js/menu.js?v=onboard1"></script>
+    <script src="js/configurar_servicos.js?v=disponibilidade1"></script>
 </body>
 </html>

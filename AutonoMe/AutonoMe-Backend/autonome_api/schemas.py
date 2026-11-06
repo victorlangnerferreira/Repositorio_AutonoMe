@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, Optional
 import re
@@ -41,9 +41,19 @@ class _CadastroBase(BaseModel):
 
     @field_validator("senha")
     @classmethod
-    def valida_tamanho_senha(cls, valor: str) -> str:
-        if len(valor) < 8 or len(valor.encode("utf-8")) > 72:
-            raise ValueError("Senha deve ter pelo menos 8 caracteres e no máximo 72 bytes")
+    def valida_senha_forte(cls, valor: str) -> str:
+        if len(valor) < 8:
+            raise ValueError("A senha deve ter pelo menos 8 caracteres.")
+        if len(valor.encode("utf-8")) > 72:
+            raise ValueError("A senha não pode ultrapassar 72 bytes.")
+        if not re.search(r"[A-Z]", valor):
+            raise ValueError("A senha deve ter pelo menos uma letra maiúscula.")
+        if not re.search(r"[a-z]", valor):
+            raise ValueError("A senha deve ter pelo menos uma letra minúscula.")
+        if not re.search(r"[0-9]", valor):
+            raise ValueError("A senha deve ter pelo menos um número.")
+        if not re.search(r"[^A-Za-z0-9\s]", valor):
+            raise ValueError("A senha deve ter pelo menos um símbolo, como ! ou #.")
         return valor
 
     @field_validator("confirmacao_senha")
@@ -56,7 +66,15 @@ class _CadastroBase(BaseModel):
 
 class CadastroPFSchema(_CadastroBase):
     cpf: str = Field(min_length=11, max_length=14)
+    data_nascimento: date
     telefone: str = Field(min_length=11, max_length=20)
+
+    @field_validator("data_nascimento")
+    @classmethod
+    def valida_data_nascimento(cls, valor: date) -> date:
+        if valor >= date.today():
+            raise ValueError("A data de nascimento deve estar no passado.")
+        return valor
 
     @field_validator("telefone")
     @classmethod
@@ -76,6 +94,9 @@ class SessaoUsuarioSchema(BaseModel):
     nome: str
     email: EmailStr
     tipo: str
+    estado: Optional[str] = None
+    cidade: Optional[str] = None
+    perfil_completo: bool = True
 
 
 class LoginResponseSchema(BaseModel):
@@ -99,6 +120,9 @@ class UsuarioEdicaoSchema(BaseModel):
 
 class ProfissoesProfissionalSchema(BaseModel):
     ids_profissoes: list[int] = Field(min_length=1, max_length=100)
+    preco_hora: Optional[Decimal] = Field(default=None, gt=0, max_digits=10, decimal_places=2)
+    descricao: Optional[str] = Field(default=None, max_length=2000)
+    experiencia: Optional[str] = Field(default=None, max_length=120)
 
     @field_validator("ids_profissoes")
     @classmethod
@@ -110,19 +134,74 @@ class ProfissoesProfissionalSchema(BaseModel):
         return valores
 
 
+class ItemDisponibilidadeSchema(BaseModel):
+    dia_semana: int = Field(ge=0, le=6)
+    horario: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+
+class DisponibilidadesSchema(BaseModel):
+    horarios: list[ItemDisponibilidadeSchema] = Field(max_length=168)
+
+    @field_validator("horarios")
+    @classmethod
+    def sem_horarios_duplicados(cls, valores: list[ItemDisponibilidadeSchema]) -> list[ItemDisponibilidadeSchema]:
+        pares = [(item.dia_semana, item.horario) for item in valores]
+        if len(pares) != len(set(pares)):
+            raise ValueError("Remova dias e horários repetidos")
+        return valores
+
+
+class ConfiguracaoInicialSchema(BaseModel):
+    estado: str = Field(min_length=2, max_length=2)
+    cidade: str = Field(min_length=2, max_length=100)
+    ids_profissoes: Optional[list[int]] = Field(default=None, min_length=1, max_length=100)
+    preco_hora: Optional[Decimal] = Field(default=None, gt=0, max_digits=10, decimal_places=2)
+
+    @field_validator("estado")
+    @classmethod
+    def normaliza_estado(cls, valor: str) -> str:
+        estado = valor.strip().upper()
+        if estado not in {
+            "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG",
+            "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+        }:
+            raise ValueError("Selecione um estado válido")
+        return estado
+
+    @field_validator("cidade")
+    @classmethod
+    def normaliza_cidade(cls, valor: str) -> str:
+        cidade = valor.strip()
+        if len(cidade) < 2:
+            raise ValueError("Informe uma cidade válida")
+        return cidade
+
+    @field_validator("ids_profissoes")
+    @classmethod
+    def valida_ids_profissoes(cls, valores: Optional[list[int]]) -> Optional[list[int]]:
+        if valores is not None and (any(valor < 1 for valor in valores) or len(valores) != len(set(valores))):
+            raise ValueError("Selecione profissões válidas, sem repetição")
+        return valores
+
+
 class UsuarioPerfilSchema(BaseModel):
     id: int
+    id_profissional: Optional[int] = None
     nome: str
     foto: Optional[str] = None
     email: Optional[EmailStr] = None
     telefone: Optional[str] = None
     tipo: str
     tipo_pessoa: str
+    data_nascimento: Optional[date] = None
+    estado: Optional[str] = None
+    cidade: Optional[str] = None
     data_cadastro: Optional[datetime] = None
     ocupacao: str
     sobre: str
     preco_hora: Optional[float] = None
     experiencia: Optional[str] = None
+    tem_servicos: bool = False
 
 
 class MensagemChatSchema(BaseModel):

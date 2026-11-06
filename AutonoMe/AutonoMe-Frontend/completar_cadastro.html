@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutonoMe - Complete seu cadastro</title>
+    <script src="js/tema.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=ux3">
+</head>
+<body data-topbar="back" data-titulo="Seu cadastro" data-sem-editar="true" data-pagina="perfil">
+    <div class="app-frame">
+        <div id="topbar-placeholder"></div>
+        <main class="app-conteudo">
+            <section class="card-box onboarding-card">
+                <h1 class="titulo-secao">Vamos completar seu cadastro</h1>
+                <p class="onboarding-instrucao">Informe onde você está para encontrar serviços e profissionais da sua região.</p>
+                <form id="form-configuracao-inicial">
+                    <div class="onboarding-campos">
+                        <label for="estado">Estado
+                            <select id="estado" required>
+                                <option value="">Selecione seu estado</option>
+                                <option value="AC">Acre</option><option value="AL">Alagoas</option>
+                                <option value="AP">Amapá</option><option value="AM">Amazonas</option>
+                                <option value="BA">Bahia</option><option value="CE">Ceará</option>
+                                <option value="DF">Distrito Federal</option><option value="ES">Espírito Santo</option>
+                                <option value="GO">Goiás</option><option value="MA">Maranhão</option>
+                                <option value="MT">Mato Grosso</option><option value="MS">Mato Grosso do Sul</option>
+                                <option value="MG">Minas Gerais</option><option value="PA">Pará</option>
+                                <option value="PB">Paraíba</option><option value="PR">Paraná</option>
+                                <option value="PE">Pernambuco</option><option value="PI">Piauí</option>
+                                <option value="RJ">Rio de Janeiro</option><option value="RN">Rio Grande do Norte</option>
+                                <option value="RS">Rio Grande do Sul</option><option value="RO">Rondônia</option>
+                                <option value="RR">Roraima</option><option value="SC">Santa Catarina</option>
+                                <option value="SP">São Paulo</option><option value="SE">Sergipe</option>
+                                <option value="TO">Tocantins</option>
+                            </select>
+                        </label>
+                        <label for="cidade">Cidade
+                            <select id="cidade" autocomplete="address-level2" required disabled>
+                                <option value="">Selecione seu estado primeiro</option>
+                            </select>
+                            <input id="cidade-manual" type="text" minlength="2" maxlength="100" autocomplete="address-level2" placeholder="Digite sua cidade" required hidden>
+                        </label>
+                        <p id="cidade-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+                    </div>
+
+                    <section id="configuracao-profissional" hidden>
+                        <h2>Quais serviços você oferece?</h2>
+                        <p class="onboarding-instrucao">Selecione as profissões que quer mostrar no seu perfil e informe sua taxa por hora. Você poderá mudar esses dados na aba de serviços.</p>
+                        <label class="visualmente-oculto" for="busca-servicos-iniciais">Buscar profissão</label>
+                        <input type="search" id="busca-servicos-iniciais" class="campo-busca-servicos" placeholder="Buscar profissão..." autocomplete="off">
+                        <p id="contagem-servicos-iniciais" class="servicos-contagem" aria-live="polite">Carregando serviços...</p>
+                        <div id="lista-servicos-iniciais" class="lista-categorias-servicos" aria-live="polite" aria-busy="true"></div>
+                        <label class="onboarding-taxa" for="preco-hora-inicial">Sua taxa por hora (R$)
+                            <input id="preco-hora-inicial" type="number" min="0.01" max="999999.99" step="0.01" placeholder="Ex.: 50,00" inputmode="decimal">
+                        </label>
+                    </section>
+
+                    <button type="submit" id="btn-salvar-inicial" class="btn-submit">Salvar e continuar</button>
+                    <p id="mensagem-inicial" class="form-feedback" role="status" aria-live="polite"></p>
+                </form>
+            </section>
+        </main>
+        <div id="bottombar-placeholder"></div>
+    </div>
+    <script src="js/api.js?v=onboard1"></script>
+    <script src="js/menu.js?v=onboard1"></script>
+    <script src="js/completar_cadastro.js?v=cidades1"></script>
+</body>
+</html>

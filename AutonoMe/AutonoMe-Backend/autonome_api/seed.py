@@ -1,10 +1,11 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect
+from datetime import datetime
 import bcrypt
 
 from autonome_api.database import Base, engine, SessionLocal
 from autonome_api.models import (
-    Usuario, Categoria, Profissao, Profissional,
+    Usuario, Categoria, Profissao, Profissional, Disponibilidade,
     ProfissionalProfissao, Avaliacao, Configuracao
 )
 
@@ -63,6 +64,29 @@ def garantir_catalogo(db: Session):
     db.commit()
     return profissoes
 
+
+def garantir_horarios_demo(db: Session):
+    profissionais_demo = db.query(Profissional).join(Usuario).filter(
+        Usuario.email.like("%@autonome.com"),
+        Usuario.tipo == "profissional",
+        Usuario.ativo.is_(True),
+        Profissional.preco_hora > 0,
+    ).all()
+    for profissional in profissionais_demo:
+        tem_horarios = db.query(Disponibilidade.id).filter(
+            Disponibilidade.id_profissional == profissional.id
+        ).first()
+        if tem_horarios:
+            continue
+        for dia_semana in range(1, 6):
+            for horario in ("08:00", "14:00", "16:00"):
+                db.add(Disponibilidade(
+                    id_profissional=profissional.id,
+                    dia_semana=dia_semana,
+                    horario=datetime.strptime(horario, "%H:%M").time(),
+                ))
+    db.commit()
+
 def gerar_cpf(index: int) -> str:
     base = f"{index:09d}"
     soma1 = sum(int(base[i]) * (10 - i) for i in range(9))
@@ -89,6 +113,7 @@ def executar_seed():
         admin_existente = db.query(Usuario).filter(Usuario.email == "admin@autonome.com").first()
         if admin_existente:
             garantir_catalogo(db)
+            garantir_horarios_demo(db)
             return
 
         senha_hash = bcrypt.hashpw("123456789".encode(), bcrypt.gensalt()).decode()
@@ -197,5 +222,6 @@ def executar_seed():
                 db.commit()
 
                 prof_counter += 1
+        garantir_horarios_demo(db)
     finally:
         db.close()
