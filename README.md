@@ -22,7 +22,7 @@ $env:EMAIL_FROM = "<email-remetente-verificado-no-brevo>"
 py server.py
 ```
 
-Abra `http://127.0.0.1:8000`. A primeira inicialização cria `data/autonome.sqlite3` com tabelas para contas ativas, códigos temporários, sessões e usuários desativados. A configuração de envio de e-mail é obrigatória para cadastro ou desativação; se faltar, o servidor informa o erro e não simula o envio do código. Também é possível usar SMTP definindo `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `SMTP_FROM`. Em produção, use HTTPS, defina `APP_ENV=production` e `COOKIE_SECURE=true`, além de uma chave `APP_SECRET` persistente e protegida. O código tem seis letras/números, vence em 10 minutos, permite até cinco tentativas e pode ser reenviado após 1 minuto. O CPF é validado no servidor, mas não é armazenado nem consultado na Receita Federal.
+Abra `http://127.0.0.1:8000`. A primeira inicialização cria `data/autonome.sqlite3` com tabelas para contas, anúncios profissionais, pedidos de contratação, códigos temporários, sessões e usuários desativados. Anúncios e pedidos são compartilhados entre as contas; a API mantém privados e-mail e telefone dos usuários. A configuração de envio de e-mail é obrigatória para cadastro ou desativação; se faltar, o servidor informa o erro e não simula o envio do código. Também é possível usar SMTP definindo `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `SMTP_FROM`. Em produção, use HTTPS, defina `APP_ENV=production` e `COOKIE_SECURE=true`, além de uma chave `APP_SECRET` persistente e protegida. O código tem seis letras/números, vence em 10 minutos, permite até cinco tentativas e pode ser reenviado após 1 minuto. O CPF é validado no servidor, mas não é armazenado nem consultado na Receita Federal.
 
 Para produção, configure também `AUTONOME_HOST=0.0.0.0` atrás de um proxy HTTPS, defina `AUTONOME_DB_PATH` para um volume persistente e mantenha `APP_SECRET` estável entre reinicializações. Para testar os endpoints sem enviar e-mails, execute `py -m unittest discover -s tests -v`.
 
@@ -74,16 +74,16 @@ O envio por `smtp.gmail.com:587` **não funciona no plano Free do Render**, mesm
 ## Fluxos incluídos
 
 - Escolha do perfil **contratante**, **profissional contratado** ou dos dois; a opção pode ser alterada em Perfil ou Configurações
-- Uma pessoa profissional de demonstração por categoria durante os testes: Construção Civil, Trabalho Doméstico, Entregas e Logística, Beleza e Bem-estar, Alimentação, Reparos e Assistência, Transporte, Entretenimento e Eventos, Aulas e Serviços Digitais, Pets e Animais, Serviços Pessoais e Outros serviços
+- Categorias de serviços disponíveis para anúncios de profissionais reais: Construção Civil, Trabalho Doméstico, Entregas e Logística, Beleza e Bem-estar, Alimentação, Reparos e Assistência, Transporte, Entretenimento e Eventos, Aulas e Serviços Digitais, Pets e Animais, Serviços Pessoais e Outros serviços
 - Busca de serviços e perfis de profissionais; a categoria "Outros serviços" aceita trabalhos que ainda não aparecem na lista
-- Publicação e gerenciamento dos próprios anúncios e saída da conta pelo menu lateral
+- Publicação, descoberta e remoção de anúncios de trabalhadores reais, compartilhados com todas as contas
 - Cadastro com máscara automática de CPF e celular, validação dos dígitos verificadores e do formato de celular brasileiro
 - Confirmação de cadastro e desativação por código aleatório de seis caracteres enviado por e-mail; contas desativadas são movidas da tabela `users` para `disabled_users`
 - Sessões autenticadas por cookie HttpOnly e senha protegida com PBKDF2; as configurações de SMTP e hospedagem são fornecidas pelo operador
 - Ao tocar em uma profissão, abre-se uma tela dedicada com os profissionais correspondentes, busca e navegação de retorno
-- Escolha de data e horário, acompanhamento de pedidos e cancelamento de contratações
-- Um profissional com pedido ativo deixa de aparecer nos resultados e volta a ficar disponível quando a contratação é cancelada
-- Consulta de contratos, conversas e notificações sem mensagens ou pedidos de demonstração apresentados como reais
+- Escolha de data e horário, envio de uma mensagem opcional ao profissional, acompanhamento dos pedidos e cancelamento de contratações
+- O profissional pode aceitar ou recusar pedidos recebidos; cada anúncio aceita um pedido ativo por vez
+- Consulta dos pedidos enviados e recebidos entre contas; e-mail e telefone não são expostos nos perfis públicos
 - Favoritos, configurações, avaliação e formulários de contato e ajuda
 
-Dados de pedidos, favoritos e anúncios continuam locais ao dispositivo; o backend armazena contas e usuários desativados, mas não sincroniza esses dados do app. A validação do CPF verifica formato e dígitos, mas não consulta situação cadastral na Receita Federal. O CPF não é armazenado. Os perfis de profissionais estão identificados como demonstração. A versão web pode ser instalada como PWA; o projeto também gera um APK Android de teste com WebView, ainda não publicado na Google Play.
+Anúncios e pedidos de contratação são armazenados no banco SQLite do backend; favoritos e preferências continuam locais ao dispositivo. O contato com o profissional começa pelo pedido de contratação e pela mensagem opcional incluída nele; mensagens diretas e compartilhamento público de telefone/e-mail ainda não estão disponíveis. Em hospedagem com disco efêmero, os anúncios e pedidos podem ser perdidos ao reiniciar ou publicar uma nova versão — use armazenamento persistente antes de confiar dados reais ao serviço. A validação do CPF verifica formato e dígitos, mas não consulta situação cadastral na Receita Federal. O CPF não é armazenado. Não há perfis fictícios no catálogo. A versão web pode ser instalada como PWA; o projeto também gera um APK Android de teste com WebView, ainda não publicado na Google Play.

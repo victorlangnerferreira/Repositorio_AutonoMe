@@ -119,11 +119,43 @@ def init_db():
                 expires_at INTEGER NOT NULL,
                 created_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS listings (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                category TEXT NOT NULL,
+                service TEXT NOT NULL,
+                location TEXT NOT NULL,
+                price TEXT NOT NULL,
+                about TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS contracts (
+                id TEXT PRIMARY KEY,
+                listing_id TEXT REFERENCES listings(id) ON DELETE SET NULL,
+                client_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                provider_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                service TEXT NOT NULL,
+                date TEXT NOT NULL,
+                details TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS email_verifications_lookup
                 ON email_verifications(email, purpose, created_at);
             CREATE INDEX IF NOT EXISTS sessions_user_lookup ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS listings_public_lookup ON listings(active, category, service);
+            CREATE INDEX IF NOT EXISTS contracts_client_lookup ON contracts(client_id, created_at);
+            CREATE INDEX IF NOT EXISTS contracts_provider_lookup ON contracts(provider_id, created_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS contracts_one_active_per_listing
+                ON contracts(listing_id)
+                WHERE listing_id IS NOT NULL AND state IN ('Aguardando confirmação', 'Confirmado');
             """
         )
+        contract_columns = {row["name"] for row in db.execute("PRAGMA table_info(contracts)")}
+        if "details" not in contract_columns:
+            db.execute("ALTER TABLE contracts ADD COLUMN details TEXT NOT NULL DEFAULT ''")
 
 
 def only_digits(value):
@@ -273,6 +305,45 @@ def public_user(user):
     return {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]}
 
 
+def public_listing(row):
+    return {
+        "id": row["id"],
+        "ownerId": row["user_id"],
+        "name": row["name"],
+        "service": row["service"],
+        "category": row["category"],
+        "initials": "".join(part[0] for part in row["name"].split()[:2]).upper(),
+        "rating": "Novo",
+        "location": row["location"],
+        "about": row["about"],
+        "price": row["price"],
+        "isBooked": bool(row["is_booked"]),
+    }
+
+
+def public_contract(row, current_user_id):
+    is_client = row["client_id"] == current_user_id
+    return {
+        "id": row["id"],
+        "listingId": row["listing_id"],
+        "providerId": row["listing_id"] or row["provider_id"],
+        "clientId": row["client_id"],
+        "ownerId": row["provider_id"],
+        "name": row["provider_name"] if is_client else row["client_name"],
+        "service": row["service"],
+        "date": row["date"],
+        "details": row["details"],
+        "state": row["state"],
+        "tab": "requested" if is_client else "hired",
+        "category": row["category"],
+        "location": row["location"],
+        "price": row["price"],
+        "about": row["about"],
+        "clientName": row["client_name"],
+        "providerName": row["provider_name"],
+    }
+
+
 class AutonoMeHandler(SimpleHTTPRequestHandler):
     server_version = "AutonoMe/1.0"
 
@@ -349,6 +420,15 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             else:
                 self.send_json(HTTPStatus.OK, {"user": public_user(user)})
             return
+        if request_path in {"/api/listings", "/api/contracts"}:
+            try:
+                self.send_json(HTTPStatus.OK, self.get_app_data(request_path))
+            except APIError as error:
+                self.send_json(error.status, {"error": str(error)})
+            except Exception:
+                self.log_error("Unhandled API error:\n%s", traceback.format_exc())
+                self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Não foi possível carregar os dados. Tente novamente."})
+            return
         if request_path.startswith("/api/"):
             self.send_json(HTTPStatus.NOT_FOUND, {"error": "Endpoint não encontrado."})
             return
@@ -373,7 +453,23 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             if origin and urlsplit(origin).netloc != self.headers.get("Host"):
                 raise APIError(HTTPStatus.FORBIDDEN, "Origem da requisição não autorizada.")
             payload = self.read_json()
-            status, response, headers = self.handle_api(self.path, payload)
+            status, response, headers = self.handle_api(urlsplit(self.path).path, payload)
+            self.send_json(status, response, headers)
+        except APIError as error:
+            self.send_json(error.status, {"error": str(error)})
+        except Exception:
+            self.log_error("Unhandled API error:\n%s", traceback.format_exc())
+            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Não foi possível concluir a solicitação. Tente novamente."})
+
+    def do_DELETE(self):
+        if not self.path.startswith("/api/"):
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "Endpoint não encontrado."})
+            return
+        try:
+            origin = self.headers.get("Origin")
+            if origin and urlsplit(origin).netloc != self.headers.get("Host"):
+                raise APIError(HTTPStatus.FORBIDDEN, "Origem da requisição não autorizada.")
+            status, response, headers = self.handle_delete(urlsplit(self.path).path)
             self.send_json(status, response, headers)
         except APIError as error:
             self.send_json(error.status, {"error": str(error)})
@@ -382,6 +478,13 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Não foi possível concluir a solicitação. Tente novamente."})
 
     def handle_api(self, path, payload):
+        if path == "/api/listings":
+            return self.create_listing(payload)
+        if path == "/api/contracts":
+            return self.create_contract(payload)
+        match = re.fullmatch(r"/api/contracts/([0-9a-f-]+)/status", path)
+        if match:
+            return self.update_contract_status(match.group(1), payload)
         if path == "/api/auth/register/start":
             return self.start_registration(payload)
         if path == "/api/auth/register/verify":
@@ -399,6 +502,167 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
         if path == "/api/auth/deactivate/verify":
             return self.verify_deactivation(payload)
         raise APIError(HTTPStatus.NOT_FOUND, "Endpoint não encontrado.")
+
+    def require_session_user(self, db):
+        user = self.get_session_user(db)
+        if user is None:
+            raise APIError(HTTPStatus.UNAUTHORIZED, "Entre na sua conta para continuar.")
+        return user
+
+    def get_app_data(self, path):
+        with database() as db:
+            user = self.require_session_user(db)
+            if path == "/api/listings":
+                rows = db.execute(
+                    """SELECT listings.*, users.name,
+                              EXISTS(
+                                  SELECT 1 FROM contracts
+                                  WHERE contracts.listing_id = listings.id
+                                    AND contracts.state IN ('Aguardando confirmação', 'Confirmado')
+                              ) AS is_booked
+                       FROM listings JOIN users ON users.id = listings.user_id
+                       WHERE listings.active = 1 ORDER BY listings.created_at DESC"""
+                ).fetchall()
+                return {"listings": [public_listing(row) for row in rows]}
+            rows = db.execute(
+                """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
+                          clients.name AS client_name, providers.name AS provider_name
+                   FROM contracts
+                   LEFT JOIN listings ON listings.id = contracts.listing_id
+                   JOIN users AS clients ON clients.id = contracts.client_id
+                   JOIN users AS providers ON providers.id = contracts.provider_id
+                   WHERE contracts.client_id = ? OR contracts.provider_id = ?
+                   ORDER BY contracts.created_at DESC""",
+                (user["id"], user["id"]),
+            ).fetchall()
+            return {"contracts": [public_contract(row, user["id"]) for row in rows]}
+
+    def create_listing(self, payload):
+        category = str(payload.get("category", "")).strip()
+        service = str(payload.get("service", "")).strip()
+        location = str(payload.get("location", "")).strip()
+        price = str(payload.get("price", "")).strip()
+        about = str(payload.get("about", "")).strip()
+        if not category or len(category) > 80:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe uma área de atuação válida.")
+        if not service or len(service) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe o serviço oferecido.")
+        if not location or len(location) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe sua cidade e estado.")
+        if not price or len(price) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe o valor ou a forma de cobrança.")
+        if not about or len(about) > 500:
+            raise APIError(HTTPStatus.BAD_REQUEST, "A descrição deve ter até 500 caracteres.")
+        with database() as db:
+            user = self.require_session_user(db)
+            if user["role"] == "client":
+                db.execute("UPDATE users SET role = 'both' WHERE id = ?", (user["id"],))
+            listing_id = str(uuid.uuid4())
+            now = int(time.time())
+            db.execute(
+                """INSERT INTO listings (id, user_id, category, service, location, price, about, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (listing_id, user["id"], category, service, location, price, about, now),
+            )
+            updated_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+            listing = db.execute(
+                """SELECT listings.*, users.name, 0 AS is_booked FROM listings
+                   JOIN users ON users.id = listings.user_id WHERE listings.id = ?""",
+                (listing_id,),
+            ).fetchone()
+        return HTTPStatus.CREATED, {"listing": public_listing(listing), "user": public_user(updated_user)}, []
+
+    def handle_delete(self, path):
+        match = re.fullmatch(r"/api/listings/([0-9a-f-]+)", path)
+        if not match:
+            raise APIError(HTTPStatus.NOT_FOUND, "Endpoint não encontrado.")
+        with database() as db:
+            user = self.require_session_user(db)
+            listing = db.execute("SELECT id, user_id FROM listings WHERE id = ?", (match.group(1),)).fetchone()
+            if listing is None or listing["user_id"] != user["id"]:
+                raise APIError(HTTPStatus.NOT_FOUND, "Anúncio não encontrado.")
+            db.execute("UPDATE listings SET active = 0 WHERE id = ?", (listing["id"],))
+        return HTTPStatus.OK, {"message": "Anúncio removido."}, []
+
+    def create_contract(self, payload):
+        listing_id = str(payload.get("listingId", ""))
+        date = str(payload.get("date", "")).strip()
+        details = str(payload.get("details", "")).strip()
+        if not re.fullmatch(r"[0-9a-f-]{36}", listing_id):
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha um serviço válido.")
+        if not date or len(date) > 100:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha uma data e horário.")
+        if len(details) > 500:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Os detalhes do pedido devem ter até 500 caracteres.")
+        with database() as db:
+            client = self.require_session_user(db)
+            if client["role"] == "provider":
+                raise APIError(HTTPStatus.FORBIDDEN, "Ative também o perfil de contratante para solicitar um serviço.")
+            listing = db.execute(
+                """SELECT listings.*, users.name AS provider_name, users.role AS provider_role
+                   FROM listings JOIN users ON users.id = listings.user_id
+                   WHERE listings.id = ? AND listings.active = 1""",
+                (listing_id,),
+            ).fetchone()
+            if listing is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Este serviço não está mais disponível.")
+            if listing["user_id"] == client["id"]:
+                raise APIError(HTTPStatus.FORBIDDEN, "Você não pode contratar o seu próprio serviço.")
+            try:
+                contract_id = str(uuid.uuid4())
+                now = int(time.time())
+                db.execute(
+                    """INSERT INTO contracts
+                       (id, listing_id, client_id, provider_id, service, date, details, state, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'Aguardando confirmação', ?, ?)""",
+                    (contract_id, listing_id, client["id"], listing["user_id"], listing["service"], date, details, now, now),
+                )
+            except sqlite3.IntegrityError as error:
+                if "contracts.listing_id" in str(error):
+                    raise APIError(HTTPStatus.CONFLICT, "Este profissional já recebeu um pedido ativo para este serviço.") from error
+                raise
+            row = db.execute(
+                """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
+                          clients.name AS client_name, providers.name AS provider_name
+                   FROM contracts JOIN listings ON listings.id = contracts.listing_id
+                   JOIN users AS clients ON clients.id = contracts.client_id
+                   JOIN users AS providers ON providers.id = contracts.provider_id
+                   WHERE contracts.id = ?""",
+                (contract_id,),
+            ).fetchone()
+        return HTTPStatus.CREATED, {"contract": public_contract(row, client["id"])}, []
+
+    def update_contract_status(self, contract_id, payload):
+        status = str(payload.get("status", ""))
+        if status not in {"confirm", "decline", "cancel"}:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Ação de contratação inválida.")
+        with database() as db:
+            user = self.require_session_user(db)
+            contract = db.execute("SELECT * FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+            if contract is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Contratação não encontrada.")
+            if status in {"confirm", "decline"}:
+                if contract["provider_id"] != user["id"] or contract["state"] != "Aguardando confirmação":
+                    raise APIError(HTTPStatus.FORBIDDEN, "Você não pode responder a esta contratação.")
+                new_state = "Confirmado" if status == "confirm" else "Pedido negado"
+            else:
+                if contract["client_id"] != user["id"] or contract["state"] not in {"Aguardando confirmação", "Confirmado"}:
+                    raise APIError(HTTPStatus.FORBIDDEN, "Você não pode cancelar esta contratação.")
+                new_state = "Cancelada"
+            db.execute(
+                "UPDATE contracts SET state = ?, updated_at = ? WHERE id = ?",
+                (new_state, int(time.time()), contract_id),
+            )
+            row = db.execute(
+                """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
+                          clients.name AS client_name, providers.name AS provider_name
+                   FROM contracts LEFT JOIN listings ON listings.id = contracts.listing_id
+                   JOIN users AS clients ON clients.id = contracts.client_id
+                   JOIN users AS providers ON providers.id = contracts.provider_id
+                   WHERE contracts.id = ?""",
+                (contract_id,),
+            ).fetchone()
+        return HTTPStatus.OK, {"contract": public_contract(row, user["id"])}, []
 
     def start_registration(self, payload):
         name = str(payload.get("name", "")).strip()

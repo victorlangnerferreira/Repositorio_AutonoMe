@@ -93,6 +93,103 @@ class AccountAPITests(unittest.TestCase):
         self.assertEqual(status, 200, response)
         return payload
 
+    def test_real_listings_and_hiring_requests_are_shared_between_accounts(self):
+        customer = {
+            "name": "Cliente Teste",
+            "email": "cliente@example.com",
+            "cpf": "529.982.247-25",
+            "phone": "(11) 98765-4321",
+            "role": "client",
+            "password": "senha-segura-123",
+        }
+        self.assertEqual(self.request("POST", "/api/auth/register/start", customer)[0], 202)
+        status, _ = self.request(
+            "POST",
+            "/api/auth/register/verify",
+            {"email": customer["email"], "code": self.sent_codes[-1][1]},
+        )
+        self.assertEqual(status, 200)
+        customer_cookie = self.cookie
+
+        self.cookie = ""
+        worker = self.register()
+        worker_cookie = self.cookie
+        worker_id = self.request("GET", "/api/auth/me")[1]["user"]["id"]
+        listing_payload = {
+            "category": "Reparos e Assistência",
+            "service": "Conserto de bicicletas",
+            "location": "São Paulo, SP",
+            "price": "A combinar",
+            "about": "Faço manutenção de bicicletas em domicílio.",
+        }
+        status, response = self.request("POST", "/api/listings", listing_payload)
+        self.assertEqual(status, 201, response)
+        listing_id = response["listing"]["id"]
+        self.assertEqual(response["user"]["role"], "both")
+        self.assertNotIn("email", response["listing"])
+        self.assertNotIn("phone", response["listing"])
+
+        self.cookie = customer_cookie
+        status, response = self.request("GET", "/api/listings")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(response["listings"]), 1)
+        self.assertEqual(response["listings"][0]["ownerId"], worker_id)
+        self.assertFalse(response["listings"][0]["isBooked"])
+        self.assertNotIn("email", json.dumps(response))
+        self.assertNotIn("phone", json.dumps(response))
+
+        status, response = self.request(
+            "POST",
+            "/api/contracts",
+            {"listingId": listing_id, "date": "Seg, 20/05 às 10:00", "details": "Preciso ajustar os freios."},
+        )
+        self.assertEqual(status, 201, response)
+        contract_id = response["contract"]["id"]
+        self.assertEqual(response["contract"]["tab"], "requested")
+        self.assertEqual(response["contract"]["name"], worker["name"])
+        self.assertTrue(self.request("GET", "/api/listings")[1]["listings"][0]["isBooked"])
+        self.assertEqual(self.request("POST", "/api/contracts", {"listingId": listing_id, "date": "Ter, 21/05 às 10:00"})[0], 409)
+        self.assertEqual(
+            self.request("POST", f"/api/contracts/{contract_id}/status", {"status": "confirm"})[0],
+            403,
+        )
+        self.assertEqual(self.request("DELETE", f"/api/listings/{listing_id}")[0], 404)
+
+        self.cookie = worker_cookie
+        status, response = self.request("GET", "/api/contracts")
+        self.assertEqual(status, 200)
+        self.assertEqual(response["contracts"][0]["tab"], "hired")
+        self.assertEqual(response["contracts"][0]["name"], customer["name"])
+        self.assertEqual(response["contracts"][0]["details"], "Preciso ajustar os freios.")
+        status, response = self.request(
+            "POST",
+            f"/api/contracts/{contract_id}/status",
+            {"status": "confirm"},
+        )
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["contract"]["state"], "Confirmado")
+        self.cookie = customer_cookie
+        status, response = self.request(
+            "POST",
+            f"/api/contracts/{contract_id}/status",
+            {"status": "cancel"},
+        )
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["contract"]["state"], "Cancelada")
+        self.assertFalse(self.request("GET", "/api/listings")[1]["listings"][0]["isBooked"])
+
+        self.cookie = worker_cookie
+        self.assertEqual(self.request("DELETE", f"/api/listings/{listing_id}")[0], 200)
+        self.assertEqual(self.request("GET", "/api/listings")[1]["listings"], [])
+
+    def test_marketplace_endpoints_require_an_account(self):
+        status, response = self.request("GET", "/api/listings")
+        self.assertEqual(status, 401)
+        self.assertIn("Entre na sua conta", response["error"])
+        status, response = self.request("GET", "/api/contracts")
+        self.assertEqual(status, 401)
+        self.assertIn("Entre na sua conta", response["error"])
+
     def test_registration_requires_email_code_and_creates_authenticated_user(self):
         payload = self.register()
         status, response = self.request("GET", "/api/auth/me")

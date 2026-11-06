@@ -13,21 +13,6 @@ const categories = [
   { name: "Outros serviços", icon: "✦", services: ["Artesanato", "Vendedor autônomo", "Artesão", "Outro serviço"] },
 ];
 
-const demoListings = [
-  { id: "demo-construction", name: "Pedro Nunes", service: "Pedreiro", category: "Construção Civil", initials: "PN", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para serviços de alvenaria e pequenos reparos.", price: "Orçamento a combinar" },
-  { id: "demo-domestic", name: "Ana Oliveira", service: "Diarista", category: "Trabalho Doméstico", initials: "AO", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para serviços de limpeza residencial.", price: "Orçamento a combinar" },
-  { id: "demo-delivery", name: "Gabriel Ramos", service: "Motoboy", category: "Entregas e Logística", initials: "GR", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para entregas locais.", price: "Orçamento a combinar" },
-  { id: "demo-beauty", name: "Mariana Lopes", service: "Manicure", category: "Beleza e Bem-estar", initials: "ML", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para serviços de manicure.", price: "Orçamento a combinar" },
-  { id: "demo-food", name: "Rafael Souza", service: "Confeiteiro", category: "Alimentação", initials: "RS", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para bolos e doces por encomenda.", price: "Orçamento a combinar" },
-  { id: "demo-repairs", name: "Carlos Mendes", service: "Conserto de celulares", category: "Reparos e Assistência", initials: "CM", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para manutenção de celulares.", price: "Orçamento a combinar" },
-  { id: "demo-transport", name: "João Costa", service: "Motorista particular", category: "Transporte", initials: "JC", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para transporte particular.", price: "Orçamento a combinar" },
-  { id: "demo-events", name: "Juliana Santos", service: "Fotógrafo", category: "Entretenimento e Eventos", initials: "JS", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para fotografia de eventos.", price: "Orçamento a combinar" },
-  { id: "demo-digital", name: "Pedro Lima", service: "Professor particular", category: "Aulas e Serviços Digitais", initials: "PL", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para aulas particulares.", price: "Orçamento a combinar" },
-  { id: "demo-pets", name: "Beatriz Ferreira", service: "Passeador de cães", category: "Pets e Animais", initials: "BF", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para passeio e cuidado de cães.", price: "Orçamento a combinar" },
-  { id: "demo-personal", name: "Carla Martins", service: "Costureiro", category: "Serviços Pessoais", initials: "CM", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para ajustes e consertos de roupas.", price: "Orçamento a combinar" },
-  { id: "demo-other", name: "Diego Almeida", service: "Artesão", category: "Outros serviços", initials: "DA", rating: "Novo", location: "São Paulo, SP", about: "Perfil de teste para trabalhos artesanais.", price: "Orçamento a combinar" },
-];
-
 const state = {
   view: "auth",
   authMode: "login",
@@ -40,7 +25,8 @@ const state = {
   userRole: "client",
   category: "",
   service: "",
-  provider: demoListings[0],
+  provider: null,
+  publicListings: [],
   contracts: [],
   contractTab: "requested",
   messages: [],
@@ -51,6 +37,7 @@ const state = {
   notifications: [],
   selectedDay: 0,
   selectedTime: "",
+  bookingDetails: "",
   selectedStars: 0,
   drawerOpen: false,
   contactType: "Sugestão",
@@ -68,15 +55,10 @@ function restoreAppState() {
     for (const key of ["ownListings", "favorites", "contracts", "messages", "notifications", "settings"]) {
       if (saved[key] !== undefined) state[key] = saved[key];
     }
-    state.contracts = state.contracts
-      .filter((contract) => !["001", "002", "003", "004", "005"].includes(contract.id))
-      .map((contract) => ({
-        ...contract,
-        providerId: contract.providerId || demoListings.find((provider) => provider.name === contract.name)?.id || "",
-        state: contract.state === "Esperando confirmação" ? "Aguardando confirmação" : contract.state,
-      }));
-    state.messages = state.messages.filter((message) => !["Victor Smith", "Luis Renato", "Maria Pereira", "Ana Machado", "Gabriel Almeida", "Luisa da Silva"].includes(message.name));
+    state.contracts = [];
+    state.messages = [];
     state.notifications = state.notifications.filter((notification) => !["request-demo", "welcome"].includes(notification.id));
+    state.favorites = state.favorites.filter((provider) => !String(provider.id || "").startsWith("demo-"));
     state.settings = { ...state.settings, ...(saved.settings || {}) };
     saveAppState();
   } catch (error) {
@@ -137,7 +119,7 @@ function button(text, action, options = {}) {
 }
 
 function allListings() {
-  return [...demoListings, ...state.ownListings];
+  return state.publicListings;
 }
 
 function activeBookings() {
@@ -146,7 +128,7 @@ function activeBookings() {
 }
 
 function isProviderBooked(provider) {
-  return activeBookings().some((contract) => (
+  return Boolean(provider.isBooked) || activeBookings().some((contract) => (
     (contract.providerId && contract.providerId === provider.id)
     || (contract.name === provider.name && contract.service === provider.service)
   ));
@@ -241,7 +223,7 @@ function categoryCards() {
   return `<div class="category-grid">${categories.map((category) => `
     <button class="category-card" type="button" data-action="open-category" data-category="${esc(category.name)}">
       <span class="category-icon">${category.icon}</span>
-      <span><h3>${esc(category.name)}</h3><p>${[...new Set([...category.services, ...state.ownListings.filter((item) => item.category === category.name).map((item) => item.service)])].length} tipos de serviço</p></span>
+      <span><h3>${esc(category.name)}</h3><p>${[...new Set([...category.services, ...allListings().filter((item) => item.category === category.name).map((item) => item.service)])].length} tipos de serviço</p></span>
       <span class="category-arrow" aria-hidden="true">↗</span>
     </button>`).join("")}</div>`;
 }
@@ -251,16 +233,16 @@ function sectionHeading(title, subtitle = "", action = "") {
 }
 
 function providerCard(provider, withFavorite = false) {
-  const favorite = state.favorites.some((item) => item.name === provider.name);
+  const favorite = state.favorites.some((item) => item.id === provider.id);
   return `<article class="listing-card">
     ${avatar(provider.initials)}
     <div>
       <h3>${esc(provider.name)}</h3><p>${esc(provider.service)} · ${esc(provider.location)}</p>
-      <div class="inline-meta">${provider.rating === "Novo" ? `<span class="status done">Perfil de teste</span>` : `<span class="rating">★ ${esc(provider.rating)}</span>`}<span>${esc(provider.price)}</span></div>
+      <div class="inline-meta"><span class="status done">Novo</span><span>${esc(provider.price)}</span></div>
     </div>
     ${withFavorite
-      ? `<span class="listing-actions"><button class="icon-button" type="button" data-action="toggle-favorite" data-provider="${esc(provider.name)}" aria-label="${favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}">${favorite ? "♥" : "♡"}</button><button class="button secondary small" type="button" data-action="open-provider" data-provider="${esc(provider.name)}">Ver perfil</button></span>`
-      : `<button class="button secondary small" type="button" data-action="open-provider" data-provider="${esc(provider.name)}">Ver perfil</button>`}
+      ? `<span class="listing-actions"><button class="icon-button" type="button" data-action="toggle-favorite" data-provider="${esc(provider.id)}" aria-label="${favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}">${favorite ? "♥" : "♡"}</button><button class="button secondary small" type="button" data-action="open-provider" data-provider="${esc(provider.id)}">Ver perfil</button></span>`
+      : `<button class="button secondary small" type="button" data-action="open-provider" data-provider="${esc(provider.id)}">Ver perfil</button>`}
   </article>`;
 }
 
@@ -313,6 +295,35 @@ function setAuthenticatedUser(user) {
   state.drawerOpen = false;
 }
 
+async function refreshRemoteData(migrateLocalListings = false) {
+  const legacyListings = migrateLocalListings ? [...state.ownListings] : [];
+  let result = await apiRequest("/api/listings", { method: "GET", headers: {} });
+  let ownListings = result.listings.filter((listing) => listing.ownerId === state.userId);
+  if (legacyListings.length && !ownListings.length) {
+    for (const listing of legacyListings) {
+      if (!listing.category || !listing.service || !listing.location || !listing.price || !listing.about) continue;
+      const saved = await apiRequest("/api/listings", {
+        method: "POST",
+        body: JSON.stringify({
+          category: listing.category,
+          service: listing.service,
+          location: listing.location,
+          price: listing.price,
+          about: listing.about,
+        }),
+      });
+      state.userRole = saved.user.role;
+    }
+    result = await apiRequest("/api/listings", { method: "GET", headers: {} });
+    ownListings = result.listings.filter((listing) => listing.ownerId === state.userId);
+  }
+  const contractsResult = await apiRequest("/api/contracts", { method: "GET", headers: {} });
+  state.publicListings = result.listings;
+  state.ownListings = ownListings;
+  state.contracts = contractsResult.contracts;
+  state.favorites = state.favorites.filter((favorite) => result.listings.some((listing) => listing.id === favorite.id));
+}
+
 async function initializeAuth() {
   if (state.authInitialized) return;
   state.authInitialized = true;
@@ -321,6 +332,12 @@ async function initializeAuth() {
     if (result.user) {
       setAuthenticatedUser(result.user);
       render();
+      try {
+        await refreshRemoteData(true);
+        render();
+      } catch (error) {
+        showToast(error.message);
+      }
     }
   } catch {
     state.authInitialized = false;
@@ -429,12 +446,12 @@ function categoriesScreen() {
 
 function listingsScreen() {
   const category = categories.find((item) => item.name === state.category);
-  const services = [...new Set([...(category?.services || []), ...state.ownListings.filter((item) => item.category === state.category).map((item) => item.service)])];
+  const services = [...new Set([...(category?.services || []), ...allListings().filter((item) => item.category === state.category).map((item) => item.service)])];
   const search = normalizedSearch(state.query);
   const categoryListings = allListings().filter((provider) => provider.category === state.category);
   const searchMatches = (provider) => !search || normalizedSearch(`${provider.name} ${provider.service} ${provider.about}`).includes(search);
-  const previouslyBooked = categoryListings.some((provider) => provider.name !== state.user && isProviderBooked(provider) && searchMatches(provider));
-  const providers = categoryListings.filter((provider) => provider.name !== state.user
+  const previouslyBooked = categoryListings.some((provider) => provider.ownerId !== state.userId && isProviderBooked(provider) && searchMatches(provider));
+  const providers = categoryListings.filter((provider) => provider.ownerId !== state.userId
     && !isProviderBooked(provider)
     && searchMatches(provider));
   return `<p class="eyebrow">${esc(state.category)}</p><h1>Encontre um profissional</h1><p class="lead">Escolha um serviço ou explore os profissionais disponíveis na sua região.</p>
@@ -451,8 +468,8 @@ function professionalsScreen() {
   const matchingService = (provider) => normalizedSearch(provider.service) === normalizedSearch(state.service);
   const matchingSearch = (provider) => !search || normalizedSearch(`${provider.name} ${provider.service} ${provider.about} ${provider.location}`).includes(search);
   const categoryListings = allListings().filter((provider) => provider.category === state.category && matchingService(provider));
-  const previouslyBooked = categoryListings.some((provider) => provider.name !== state.user && isProviderBooked(provider) && matchingSearch(provider));
-  const providers = categoryListings.filter((provider) => provider.name !== state.user
+  const previouslyBooked = categoryListings.some((provider) => provider.ownerId !== state.userId && isProviderBooked(provider) && matchingSearch(provider));
+  const providers = categoryListings.filter((provider) => provider.ownerId !== state.userId
     && !isProviderBooked(provider)
     && matchingSearch(provider));
   return `<button class="text-button back-link" type="button" data-action="back-to-services">← Voltar aos serviços</button>
@@ -464,13 +481,12 @@ function professionalsScreen() {
 function profileScreen() {
   const provider = state.provider;
   const ownProfile = state.user !== "Visitante" && state.view === "profile";
-  const myListing = !ownProfile && state.user !== "Visitante"
-    && provider.name === state.user && state.ownListings.some((listing) => listing.id === provider.id);
+  const myListing = !ownProfile && state.user !== "Visitante" && provider.ownerId === state.userId;
   const person = ownProfile ? { name: state.user, initials: initials(state.user), service: state.userRole === "provider" ? "Profissional autônomo" : state.userRole === "both" ? "Contratante e profissional autônomo" : "Contratante", location: state.ownListings[0]?.location || "Cidade - Estado", about: "Encontre profissionais ou divulgue os serviços que você oferece.", rating: "—" } : provider;
   return `<section class="card profile-hero">${avatar(person.initials, true)}<div><p class="eyebrow">${ownProfile ? "Meu perfil" : "Profissional"}</p><h1>${esc(person.name)}</h1><p>${esc(person.location)}</p></div></section>
-    ${ownProfile ? `<section class="card profile-block"><h3>Como você quer usar o AutonoMe?</h3>${roleOptions(state.userRole)}<button class="text-button" data-action="offer-service">Cadastrar um serviço →</button></section>${state.ownListings.length ? sectionHeading("Meus serviços publicados", `${state.ownListings.length} anúncios`, `<button class="text-button" data-action="my-services">Gerenciar ↗</button>` ) + `<div class="listing-list">${state.ownListings.slice(0, 3).map((listing) => providerCard(listing)).join("")}</div>` : ""}<section class="card profile-block"><h3>Preferências</h3><button class="text-button" data-action="settings">Configurações →</button></section>` : `<section class="card profile-block"><div class="card-top"><h3>Sobre o perfil</h3>${person.rating === "Novo" ? `<span class="status done">Demonstração</span>` : `<span class="rating">★ ${esc(person.rating)}</span>`}</div><p>${esc(person.about)}</p></section><section class="card profile-block"><h3>Serviço</h3><p>${esc(person.service)}<br>${esc(person.price)}</p></section>
-    <section class="card profile-block"><h3>Contatos</h3><p>Entre em contato após combinar os detalhes do serviço.</p><div class="profile-contact"><div class="contact-tile"><span>E-mail</span><strong>Disponível após combinar</strong></div><div class="contact-tile"><span>Telefone</span><strong>Disponível após combinar</strong></div></div></section>
-    <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:10px">${myListing ? button("Gerenciar meus serviços", "my-services") : isProviderBooked(provider) ? button("Ver contratação ativa", "contracts", { variant: "secondary" }) : button(state.userRole === "provider" ? "Ative o perfil de contratante para agendar" : "Escolher horário", "calendar", { disabled: state.userRole === "provider" })}${myListing || isProviderBooked(provider) ? "" : button(state.favorites.some((item) => item.name === provider.name) ? "♥ Salvo nos favoritos" : "♡ Salvar nos favoritos", "favorite-current", { variant: "secondary" })}</div>`}`;
+    ${ownProfile ? `<section class="card profile-block"><h3>Como você quer usar o AutonoMe?</h3>${roleOptions(state.userRole)}<button class="text-button" data-action="offer-service">Cadastrar um serviço →</button></section>${state.ownListings.length ? sectionHeading("Meus serviços publicados", `${state.ownListings.length} anúncios`, `<button class="text-button" data-action="my-services">Gerenciar ↗</button>` ) + `<div class="listing-list">${state.ownListings.slice(0, 3).map((listing) => providerCard(listing)).join("")}</div>` : ""}<section class="card profile-block"><h3>Preferências</h3><button class="text-button" data-action="settings">Configurações →</button></section>` : `<section class="card profile-block"><div class="card-top"><h3>Sobre o perfil</h3><span class="status done">Novo</span></div><p>${esc(person.about)}</p></section><section class="card profile-block"><h3>Serviço</h3><p>${esc(person.service)}<br>${esc(person.price)}</p></section>
+    <section class="card profile-block"><h3>Contato e contratação</h3><p>Envie um pedido pelo AutonoMe. O profissional poderá confirmar ou recusar; seus dados pessoais não são exibidos publicamente.</p></section>
+    <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:10px">${myListing ? button("Gerenciar meus serviços", "my-services") : isProviderBooked(provider) ? button("Ver contratação ativa", "contracts", { variant: "secondary" }) : button(state.userRole === "provider" ? "Ative também o perfil contratante" : "Solicitar contratação", "calendar", { disabled: state.userRole === "provider" })}${myListing || isProviderBooked(provider) ? "" : button(state.favorites.some((item) => item.id === provider.id) ? "♥ Salvo nos favoritos" : "♡ Salvar nos favoritos", "favorite-current", { variant: "secondary" })}</div>`}`;
 }
 
 function providerSetupScreen() {
@@ -500,43 +516,43 @@ function calendarScreen() {
     return { day: weekdays[date.getDay()], date: `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}` };
   });
   return `<p class="eyebrow">Agendar serviço</p><h1>Escolha um horário</h1><p class="lead">Veja a disponibilidade de ${esc(state.provider.name)} e envie seu pedido de contratação.</p>
-    <section class="card profile-hero">${avatar(state.provider.initials)}<div><h3>${esc(state.provider.name)}</h3><p>${esc(state.provider.service)} · ${state.provider.rating === "Novo" ? `<span class="status done">Perfil de teste</span>` : `<span class="rating">★ ${esc(state.provider.rating)}</span>`}</p></div></section>
+    <section class="card profile-hero">${avatar(state.provider.initials)}<div><h3>${esc(state.provider.name)}</h3><p>${esc(state.provider.service)} · <span class="status done">Novo</span></p></div></section>
     ${sectionHeading("Escolha o dia", "Selecione uma data para consultar a disponibilidade.")}
     <div class="day-picker">${days.map((day, index) => `<button class="day-option ${state.selectedDay === index ? "selected" : ""}" data-action="select-day" data-day="${index}"><span>${day.day}</span><strong>${day.date}</strong></button>`).join("")}</div>
     ${sectionHeading("Horários disponíveis", "Selecione um horário para enviar o pedido.")}
     <div class="time-grid">${times.map((time) => `<button class="time-option ${state.selectedTime === time ? "selected" : ""}" data-action="select-time" data-time="${time}" aria-pressed="${state.selectedTime === time}">${time}</button>`).join("")}</div>
+    <div class="field"><label for="booking-details">Conte ao profissional o que você precisa (opcional)</label><textarea id="booking-details" rows="3" maxlength="500" placeholder="Descreva brevemente o serviço ou tire uma dúvida.">${esc(state.bookingDetails)}</textarea></div>
     ${state.selectedTime ? `<div class="booking-summary">Horário selecionado: <strong>${days[state.selectedDay].day}, ${days[state.selectedDay].date} às ${state.selectedTime}</strong></div>` : ""}
     ${state.userRole === "provider" ? `<div class="booking-summary">Seu perfil está configurado apenas para oferecer serviços. Ative também o modo contratante nas configurações para contratar profissionais.</div>` : ""}
     ${isProviderBooked(state.provider) ? `<div class="booking-summary">Este profissional tem uma contratação ativa. Cancele o pedido atual para liberar novos horários.</div>` : ""}
-    ${button("Enviar pedido de contratação", "submit-booking", { disabled: !state.selectedTime || state.userRole === "provider" || isProviderBooked(state.provider) })}`;
+    ${button("Solicitar contratação", "submit-booking", { disabled: !state.selectedTime || state.userRole === "provider" || isProviderBooked(state.provider) })}`;
 }
 
 function contractsScreen() {
   const entries = state.contracts.filter((item) => item.tab === state.contractTab);
   return `<p class="eyebrow">Acompanhe seus serviços</p><h1>Contratos</h1><p class="lead">Consulte seus pedidos, confirmações e serviços anteriores.</p>
-    <div class="tabs" role="tablist"><button class="tab ${state.contractTab === "hired" ? "active" : ""}" role="tab" data-action="contract-tab" data-tab="hired">Contratados</button><button class="tab ${state.contractTab === "requested" ? "active" : ""}" role="tab" data-action="contract-tab" data-tab="requested">Contratações</button></div>
-    <div class="section-heading"><div><h2>${state.contractTab === "hired" ? "Serviços que vou prestar" : "Serviços que solicitei"}</h2><p>${entries.length} ${entries.length === 1 ? "serviço" : "serviços"}</p></div></div>
+    <div class="tabs" role="tablist"><button class="tab ${state.contractTab === "requested" ? "active" : ""}" role="tab" data-action="contract-tab" data-tab="requested">Solicitados</button><button class="tab ${state.contractTab === "hired" ? "active" : ""}" role="tab" data-action="contract-tab" data-tab="hired">Recebidos</button></div>
+    <div class="section-heading"><div><h2>${state.contractTab === "hired" ? "Pedidos para seus serviços" : "Pedidos que você enviou"}</h2><p>${entries.length} ${entries.length === 1 ? "pedido" : "pedidos"}</p></div></div>
     <div class="stack">${entries.length ? entries.map((item) => {
       const contractState = item.state.toLowerCase();
       const badge = contractState.includes("confirmado") ? "ok" : contractState.includes("cancel") || contractState.includes("terminado") || contractState.includes("entregue") || contractState.includes("concluído") || contractState.includes("negado") ? "done" : "";
         const canCancel = item.tab === "requested" && ["aguardando confirmação", "esperando confirmação", "confirmado"].includes(contractState);
-      return `<article class="card contract-card">${avatar(initials(item.name))}<div><h3>${esc(item.name)}</h3><p style="margin:0 0 7px;color:var(--muted);font-size:12px">${esc(item.service)} · ${esc(item.date)}</p><span class="status ${badge}">${esc(item.state)}</span></div><span class="contract-actions"><button class="button secondary small" data-action="contract-detail" data-contract="${esc(item.id)}">Detalhes</button>${canCancel ? `<button class="button danger small" data-action="cancel-contract" data-contract="${esc(item.id)}">Cancelar</button>` : ""}</span></article>`;
+      return `<article class="card contract-card">${avatar(initials(item.name))}<div><h3>${esc(item.name)}</h3><p style="margin:0 0 7px;color:var(--muted);font-size:12px">${esc(item.service)} · ${esc(item.date)}</p><span class="status ${badge}">${esc(item.state)}</span></div><span class="contract-actions"><button class="button secondary small" data-action="contract-detail" data-contract="${esc(item.id)}">Detalhes</button>${canCancel ? `<button class="button danger small" data-action="cancel-contract" data-contract="${esc(item.id)}">Cancelar</button>` : ""}${item.tab === "hired" && item.state === "Aguardando confirmação" ? `<button class="button small" data-action="respond-contract" data-status="confirm" data-contract="${esc(item.id)}">Aceitar</button><button class="button danger small" data-action="respond-contract" data-status="decline" data-contract="${esc(item.id)}">Recusar</button>` : ""}</span></article>`;
     }).join("") : `<div class="card empty-state"><div class="empty-icon">${state.contractTab === "hired" ? "✦" : "▤"}</div><h3>${state.contractTab === "hired" ? "Nenhum pedido para prestar serviço" : "Nenhuma contratação por enquanto"}</h3><p>${state.contractTab === "hired" ? "Quando um cliente solicitar um serviço seu, o pedido aparecerá aqui." : "Encontre um profissional, escolha um horário e acompanhe seu pedido nesta tela."}</p>${state.contractTab === "requested" ? `<button class="button" data-action="categories">Explorar serviços</button>` : ""}</div>`}</div>`;
 }
 
 function contractDetailScreen() {
   const contract = state.contracts.find((item) => item.id === state.detailId);
-  const provider = allListings().find((item) => item.name === contract?.name) || state.provider;
+  const provider = allListings().find((item) => item.id === contract?.listingId) || state.provider || {};
   if (!contract) return `<div class="card empty-state"><h2>Contrato não encontrado</h2>${button("Voltar aos contratos", "contracts", { variant: "secondary" })}</div>`;
   return `<p class="eyebrow">Detalhes do serviço</p><h1>Especificações</h1>
     <section class="card profile-hero">${avatar(initials(contract.name), true)}<div><p class="eyebrow">Serviço combinado</p><h1>${esc(contract.name)}</h1><p>${esc(contract.service)} · ${esc(contract.date)}</p></div></section>
-    <section class="card profile-block"><span class="status ${contract.state === "Confirmado" ? "ok" : ["Cancelada", "Pedido negado", "Concluído"].includes(contract.state) ? "done" : ""}">${esc(contract.state)}</span><h3 style="margin-top:18px">Sobre o serviço</h3><p>${esc(provider.about || "Descrição do serviço a ser ou que foi prestado.")}</p><h3 style="margin-top:20px">Profissional</h3><p>${esc(contract.service)} · ${esc(provider.location || "Cidade - Estado")}</p></section>
-    <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap">${contract.state === "Cancelada" ? "" : button("Abrir conversa", "open-chat-provider")}${button("Voltar aos contratos", "contracts", { variant: "secondary" })}${contract.tab === "requested" && ["Aguardando confirmação", "Confirmado"].includes(contract.state) ? `<button class="button danger" type="button" data-action="cancel-contract" data-contract="${esc(contract.id)}">Cancelar contratação</button>` : ""}${["Concluído", "Pedido negado"].includes(contract.state) ? button("Avaliar serviço", "review", { variant: "ghost" }) : ""}</div>`;
+    <section class="card profile-block"><span class="status ${contract.state === "Confirmado" ? "ok" : ["Cancelada", "Pedido negado", "Concluído"].includes(contract.state) ? "done" : ""}">${esc(contract.state)}</span><h3 style="margin-top:18px">Sobre o serviço</h3><p>${esc(provider.about || "Descrição do serviço a ser ou que foi prestado.")}</p>${contract.details ? `<h3 style="margin-top:20px">Mensagem do cliente</h3><p>${esc(contract.details)}</p>` : ""}<h3 style="margin-top:20px">Profissional</h3><p>${esc(contract.service)} · ${esc(provider.location || "Cidade - Estado")}</p></section>
+    <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap">${button("Voltar aos contratos", "contracts", { variant: "secondary" })}${contract.tab === "requested" && ["Aguardando confirmação", "Confirmado"].includes(contract.state) ? `<button class="button danger" type="button" data-action="cancel-contract" data-contract="${esc(contract.id)}">Cancelar contratação</button>` : ""}${contract.tab === "hired" && contract.state === "Aguardando confirmação" ? `<button class="button" type="button" data-action="respond-contract" data-status="confirm" data-contract="${esc(contract.id)}">Aceitar pedido</button><button class="button danger" type="button" data-action="respond-contract" data-status="decline" data-contract="${esc(contract.id)}">Recusar pedido</button>` : ""}</div>`;
 }
 
 function messagesScreen() {
-  return `<p class="eyebrow">Converse com sua comunidade</p><h1>Mensagens</h1><p class="lead">Suas conversas com profissionais e clientes ficam por aqui.</p>
-    ${state.messages.length ? `<div class="stack">${state.messages.map((message) => `<button class="message-card" data-action="open-chat" data-person="${esc(message.name)}">${avatar(message.initials)}<span class="message-copy"><strong>${esc(message.name)}</strong><span>${esc(message.preview)}</span></span><span class="message-time">${esc(message.time)}</span></button>`).join("")}</div>` : `<section class="card empty-state"><div class="empty-icon">☷</div><h2>Nenhuma conversa ainda</h2><p>As conversas sobre serviços contratados aparecerão aqui.</p><button class="button" data-action="categories">Encontrar um profissional</button></section>`}`;
+  return `<p class="eyebrow">Contato seguro</p><h1>Mensagens</h1><section class="card empty-state"><div class="empty-icon">☷</div><h2>Converse sobre uma contratação</h2><p>Para entrar em contato, envie um pedido pelo perfil do profissional. O pedido aparecerá em Contratos para você e para o profissional.</p><button class="button" data-action="categories">Encontrar um profissional</button></section>`;
 }
 
 function chatScreen() {
@@ -639,8 +655,9 @@ app.addEventListener("change", async (event) => {
     try {
       await apiRequest("/api/auth/role", { method: "POST", body: JSON.stringify({ role: event.target.value }) });
       state.userRole = event.target.value;
+      if (state.userRole !== "client" && !state.ownListings.length) state.view = "provider-setup";
       render();
-      showToast(`Perfil atualizado: ${event.target.nextElementSibling.querySelector("strong").textContent}.`);
+      showToast("Perfil atualizado. Agora você pode publicar seus serviços.");
     } catch (error) {
       state.userRole = previousRole;
       render();
@@ -675,14 +692,18 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.remove(), duration);
 }
 
-function openProvider(name) {
-  state.provider = allListings().find((item) => item.name === name) || state.provider;
+function openProvider(id) {
+  state.provider = allListings().find((item) => item.id === id) || state.provider;
   state.view = "provider-profile";
   state.drawerOpen = false;
   render();
 }
 
 app.addEventListener("input", (event) => {
+  if (event.target.matches("#booking-details")) {
+    state.bookingDetails = event.target.value;
+    return;
+  }
   if (event.target.matches("#auth-cpf, #auth-phone")) {
     const input = event.target;
     const cpfInput = input.id === "auth-cpf";
@@ -745,8 +766,20 @@ app.addEventListener("click", async (event) => {
       break;
     case "open-drawer": state.drawerOpen = true; break;
     case "close-drawer": state.drawerOpen = false; break;
-    case "categories": state.view = "categories"; break;
+    case "categories":
+      try {
+        await refreshRemoteData();
+      } catch (error) {
+        showToast(error.message);
+      }
+      state.view = "categories";
+      break;
     case "open-category":
+      try {
+        await refreshRemoteData();
+      } catch (error) {
+        showToast(error.message);
+      }
       state.category = target.dataset.category;
       state.service = "";
       state.query = "";
@@ -762,7 +795,9 @@ app.addEventListener("click", async (event) => {
       state.query = "";
       state.view = "listings";
       break;
-    case "open-provider": openProvider(target.dataset.provider || allListings()[0].name); return;
+    case "open-provider":
+      openProvider(target.dataset.provider || allListings()[0]?.id);
+      return;
     case "offer-service":
       state.view = "provider-setup";
       state.offerCategory = state.ownListings[0]?.category || categories[0].name;
@@ -771,8 +806,13 @@ app.addEventListener("click", async (event) => {
     case "my-services": state.view = "my-services"; state.drawerOpen = false; break;
     case "delete-listing": {
       if (!window.confirm("Deseja excluir este anúncio?")) return;
-      state.ownListings = state.ownListings.filter((item) => item.id !== target.dataset.listing);
-      showToast("Anúncio removido.");
+      try {
+        await apiRequest(`/api/listings/${encodeURIComponent(target.dataset.listing)}`, { method: "DELETE" });
+        await refreshRemoteData();
+        showToast("Anúncio removido.");
+      } catch (error) {
+        showToast(error.message);
+      }
       break;
     }
     case "delete-account":
@@ -796,6 +836,7 @@ app.addEventListener("click", async (event) => {
       state.user = "Visitante";
       state.userId = "";
       state.userRole = "client";
+      state.publicListings = [];
       state.userEmail = "";
       state.ownListings = [];
       state.favorites = [];
@@ -823,6 +864,7 @@ app.addEventListener("click", async (event) => {
       state.view = "calendar";
       state.selectedTime = "";
       state.selectedDay = 0;
+      state.bookingDetails = "";
       break;
     case "select-day": state.selectedDay = Number(target.dataset.day); break;
     case "select-time": state.selectedTime = target.dataset.time; break;
@@ -836,7 +878,7 @@ app.addEventListener("click", async (event) => {
         showToast("Ative o modo contratante no seu perfil para agendar.");
         return;
       }
-      if (state.provider.name === state.user) {
+      if (state.provider.ownerId === state.userId) {
         showToast("Você não pode contratar o seu próprio serviço.");
         return;
       }
@@ -846,19 +888,43 @@ app.addEventListener("click", async (event) => {
         render();
         return;
       }
-      const contract = { id: String(Date.now()), providerId: state.provider.id || "", name: state.provider.name, service: state.provider.service, date: `${dayName}, ${dateLabel} às ${state.selectedTime}`, state: "Aguardando confirmação", tab: "requested" };
-      state.contracts.unshift(contract);
-      state.notifications.unshift({ id: `booking-${contract.id}`, title: "Pedido enviado", text: `Seu pedido para ${state.provider.name} foi enviado. Aguarde a confirmação do profissional.`, time: "Agora", request: false });
-      state.contractTab = "requested";
-      state.view = "contracts";
-      showToast("Pedido de contratação enviado!");
+      try {
+        await apiRequest("/api/contracts", {
+          method: "POST",
+          body: JSON.stringify({
+            listingId: state.provider.id,
+            date: `${dayName}, ${dateLabel} às ${state.selectedTime}`,
+            details: state.bookingDetails,
+          }),
+        });
+        await refreshRemoteData();
+        state.bookingDetails = "";
+        state.contractTab = "requested";
+        state.view = "contracts";
+        showToast("Pedido enviado ao profissional.");
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       break;
     }
     case "contracts":
+      try {
+        await refreshRemoteData();
+      } catch (error) {
+        showToast(error.message);
+      }
       state.view = "contracts";
       state.contractTab = "requested";
       break;
-    case "contract-tab": state.contractTab = target.dataset.tab; break;
+    case "contract-tab":
+      try {
+        await refreshRemoteData();
+      } catch (error) {
+        showToast(error.message);
+      }
+      state.contractTab = target.dataset.tab;
+      break;
     case "contract-detail":
       state.detailId = target.dataset.contract;
       state.view = "contract-detail";
@@ -867,10 +933,35 @@ app.addEventListener("click", async (event) => {
       const contract = state.contracts.find((item) => item.id === target.dataset.contract);
       if (!contract || contract.tab !== "requested" || !["Aguardando confirmação", "Esperando confirmação", "Confirmado"].includes(contract.state)) return;
       if (!window.confirm(`Cancelar a contratação de ${contract.name}? O profissional voltará a aparecer nos resultados.`)) return;
-      contract.state = "Cancelada";
+      try {
+        await apiRequest(`/api/contracts/${encodeURIComponent(contract.id)}/status`, {
+          method: "POST",
+          body: JSON.stringify({ status: "cancel" }),
+        });
+        await refreshRemoteData();
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       state.contractTab = "requested";
       state.view = "contracts";
       showToast("Contratação cancelada. O profissional está disponível novamente.");
+      break;
+    }
+    case "respond-contract": {
+      try {
+        await apiRequest(`/api/contracts/${encodeURIComponent(target.dataset.contract)}/status`, {
+          method: "POST",
+          body: JSON.stringify({ status: target.dataset.status }),
+        });
+        await refreshRemoteData();
+        state.contractTab = "hired";
+        state.view = "contracts";
+        showToast(target.dataset.status === "confirm" ? "Pedido aceito." : "Pedido recusado.");
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       break;
     }
     case "messages": state.view = "messages"; break;
@@ -912,16 +1003,16 @@ app.addEventListener("click", async (event) => {
     }
     case "favorites": state.view = "favorites"; state.drawerOpen = false; break;
     case "toggle-favorite": {
-      const provider = allListings().find((item) => item.name === target.dataset.provider);
+      const provider = allListings().find((item) => item.id === target.dataset.provider);
       if (!provider) return;
-      const existing = state.favorites.findIndex((item) => item.name === provider.name);
+      const existing = state.favorites.findIndex((item) => item.id === provider.id);
       if (existing >= 0) state.favorites.splice(existing, 1);
       else state.favorites.push(provider);
       showToast(existing >= 0 ? "Profissional removido dos favoritos." : "Profissional adicionado aos favoritos.");
       break;
     }
     case "favorite-current": {
-      const existing = state.favorites.findIndex((item) => item.name === state.provider.name);
+      const existing = state.favorites.findIndex((item) => item.id === state.provider.id);
       if (existing >= 0) state.favorites.splice(existing, 1);
       else state.favorites.push(state.provider);
       showToast(existing >= 0 ? "Profissional removido dos favoritos." : "Profissional adicionado aos favoritos.");
@@ -982,7 +1073,13 @@ app.addEventListener("submit", async (event) => {
           body: JSON.stringify({ email: data.get("email"), password: data.get("password") }),
         });
         setAuthenticatedUser(result.user);
-        state.view = state.userRole === "provider" ? "provider-setup" : "home";
+        state.view = state.userRole !== "client" ? "provider-setup" : "home";
+        try {
+          await refreshRemoteData(true);
+        } catch (error) {
+          showToast(error.message);
+        }
+        state.view = state.userRole !== "client" && !state.ownListings.length ? "provider-setup" : "home";
         state.notifications.unshift({ id: `hello-${Date.now()}`, title: `Olá, ${name || state.user}!`, text: "Explore as áreas disponíveis e encontre seu próximo serviço.", time: "Agora", request: false });
       } catch (error) {
         showToast(error.message);
@@ -998,7 +1095,13 @@ app.addEventListener("submit", async (event) => {
             body: JSON.stringify({ email: state.pendingEmail, code: data.get("code") }),
           });
           setAuthenticatedUser(result.user);
-          state.view = state.userRole === "provider" ? "provider-setup" : "home";
+          state.view = state.userRole !== "client" ? "provider-setup" : "home";
+          try {
+            await refreshRemoteData();
+          } catch (error) {
+            showToast(error.message);
+          }
+          state.view = state.userRole !== "client" ? "provider-setup" : "home";
           state.notifications.unshift({ id: `hello-${Date.now()}`, title: `Olá, ${state.user}!`, text: "Sua conta foi confirmada. Explore os serviços disponíveis.", time: "Agora", request: false });
         } else {
           await apiRequest("/api/auth/deactivate/verify", {
@@ -1039,18 +1142,23 @@ app.addEventListener("submit", async (event) => {
         return;
       }
       const listing = {
-        id: `listing-${Date.now()}`,
-        name: state.user,
         service,
         category,
-        initials: initials(state.user),
-        rating: "Novo",
         location: String(data.get("location") || "").trim(),
         about: String(data.get("about") || "").trim(),
         price: String(data.get("price") || "").trim(),
       };
-      state.ownListings.unshift(listing);
-      state.userRole = state.userRole === "client" ? "both" : state.userRole;
+      try {
+        const result = await apiRequest("/api/listings", {
+          method: "POST",
+          body: JSON.stringify(listing),
+        });
+        state.userRole = result.user.role;
+        await refreshRemoteData();
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       state.view = "my-services";
       showToast("Seu serviço foi publicado!");
       break;
