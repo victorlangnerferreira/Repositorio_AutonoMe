@@ -23,6 +23,9 @@ const state = {
   user: "Visitante",
   userId: "",
   userRole: "client",
+  profileBio: "",
+  profileLocation: "",
+  profilePhoto: "",
   category: "",
   service: "",
   provider: null,
@@ -32,8 +35,11 @@ const state = {
   messages: [],
   activeChat: null,
   chatMessages: [],
+  conversations: [],
+  activeConversationId: "",
   favorites: [],
   ownListings: [],
+  editingListingId: "",
   notifications: [],
   selectedDay: 0,
   selectedTime: "",
@@ -82,6 +88,8 @@ const app = document.querySelector("#app");
 const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const times = Array.from({ length: 24 }, (_, index) => `${String(index + 1).padStart(2, "0")}:00`);
 let toastTimer;
+let chatPollTimer;
+let chatPollBusy = false;
 let installPromptEvent = null;
 
 function isInstalled() {
@@ -108,8 +116,8 @@ function initials(name) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase();
 }
 
-function avatar(label, large = false) {
-  return `<span class="avatar${large ? " large" : ""}" aria-hidden="true">${esc(label)}</span>`;
+function avatar(label, large = false, photo = "") {
+  return `<span class="avatar${large ? " large" : ""}" aria-hidden="true">${photo ? `<img src="${esc(photo)}" alt="">` : esc(label)}</span>`;
 }
 
 function button(text, action, options = {}) {
@@ -235,7 +243,7 @@ function sectionHeading(title, subtitle = "", action = "") {
 function providerCard(provider, withFavorite = false) {
   const favorite = state.favorites.some((item) => item.id === provider.id);
   return `<article class="listing-card">
-    ${avatar(provider.initials)}
+    ${avatar(provider.initials, false, provider.profilePhoto)}
     <div>
       <h3>${esc(provider.name)}</h3><p>${esc(provider.service)} · ${esc(provider.location)}</p>
       <div class="inline-meta"><span class="status done">Novo</span><span>${esc(provider.price)}</span></div>
@@ -280,6 +288,10 @@ function setAuthenticatedUser(user) {
     state.favorites = [];
     state.contracts = [];
     state.messages = [];
+    state.conversations = [];
+    state.activeChat = null;
+    state.activeConversationId = "";
+    state.chatMessages = [];
     state.notifications = [];
     state.settings = { "Notificações": true, "Modo Escuro": false, "Permitir localização": false, "Permitir microfone": false, "Permitir câmera": false };
     state.userId = user.id;
@@ -289,6 +301,9 @@ function setAuthenticatedUser(user) {
   state.userId = user.id;
   state.userEmail = user.email;
   state.userRole = user.role;
+  state.profileBio = user.profileBio || "";
+  state.profileLocation = user.profileLocation || "";
+  state.profilePhoto = user.profilePhoto || "";
   state.authInitialized = true;
   state.view = "home";
   state.pendingEmail = "";
@@ -324,6 +339,19 @@ async function refreshRemoteData(migrateLocalListings = false) {
   state.favorites = state.favorites.filter((favorite) => result.listings.some((listing) => listing.id === favorite.id));
 }
 
+async function refreshConversations() {
+  const result = await apiRequest("/api/messages", { method: "GET", headers: {} });
+  state.conversations = result.conversations;
+}
+
+async function openConversation(contractId) {
+  const result = await apiRequest(`/api/messages?contractId=${encodeURIComponent(contractId)}`, { method: "GET", headers: {} });
+  state.activeConversationId = contractId;
+  state.activeChat = result.conversation;
+  state.chatMessages = result.messages;
+  state.view = "chat";
+}
+
 async function initializeAuth() {
   if (state.authInitialized) return;
   state.authInitialized = true;
@@ -348,7 +376,7 @@ function authScreen() {
   const registering = state.authMode === "register";
   return `<main class="auth-wrap">
     <section class="auth-aside">
-      <div class="auth-brand-row"><div class="brand-lockup" data-action="auth-home"><span class="brand-mark">A</span><span class="brand-name">AutonoMe</span></div>${installButton()}</div>
+      <div class="auth-brand-row"><div class="brand-lockup" data-action="auth-home"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div>${installButton()}</div>
       <div class="auth-message"><h1>Serviços perto.<br>Conexões de verdade.</h1><p>Encontre profissionais autônomos no seu bairro e combine serviços do seu jeito.</p><div class="auth-art" aria-hidden="true">A</div></div>
       <div class="auth-footer">Uma comunidade que valoriza quem faz acontecer.</div>
     </section>
@@ -376,7 +404,7 @@ function emailVerificationScreen() {
   const message = deactivation
     ? `Enviamos um código para ${esc(state.userEmail)}. Digite-o para mover sua conta para a lista de usuários desativados.`
     : `Enviamos um código para ${esc(state.pendingEmail)}. Confirme seu e-mail para ativar a conta.`;
-  return `<main class="auth-wrap"><section class="auth-aside"><div class="auth-brand-row"><div class="brand-lockup" data-action="auth-home"><span class="brand-mark">A</span><span class="brand-name">AutonoMe</span></div></div><div class="auth-message"><h1>Segurança em primeiro lugar.</h1><p>Confirme que você tem acesso ao e-mail antes de continuar.</p><div class="auth-art" aria-hidden="true">A</div></div><div class="auth-footer">AutonoMe · verificação de conta</div></section>
+  return `<main class="auth-wrap"><section class="auth-aside"><div class="auth-brand-row"><div class="brand-lockup" data-action="auth-home"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div></div><div class="auth-message"><h1>Segurança em primeiro lugar.</h1><p>Confirme que você tem acesso ao e-mail antes de continuar.</p><div class="auth-art" aria-hidden="true">A</div></div><div class="auth-footer">AutonoMe · verificação de conta</div></section>
     <section class="auth-panel"><p class="eyebrow">${deactivation ? "Desativação segura" : "Confirme seu e-mail"}</p><h2>${deactivation ? "Confirme para desativar" : "Digite o código"}</h2><p>${message}</p>
       <form class="form-stack" data-form="auth-verify"><div class="field"><label for="auth-code">Código de 6 caracteres</label><input id="auth-code" name="code" type="text" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" maxlength="6" minlength="6" pattern="[A-Za-z0-9]{6}" placeholder="A1B2C3" required></div>
       <button class="button" type="submit">${deactivation ? "Desativar conta" : "Confirmar e criar conta"}</button></form>
@@ -392,8 +420,8 @@ function shell(content) {
         : state.view === "profile" ? "profile" : "";
   return `<div class="app-frame">
     <header class="topbar">
-      <div class="brand-lockup" data-action="go-home" role="button" tabindex="0"><span class="brand-mark">A</span><span class="brand-name">AutonoMe</span></div>
-      <div class="top-actions">${installButton()}<div class="user-chip">${avatar(initials(state.user) || "V")}<span>${esc(state.user)}</span></div><button class="icon-button" type="button" data-action="open-drawer" aria-label="Abrir menu">☰</button></div>
+      <div class="brand-lockup" data-action="go-home" role="button" tabindex="0"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div>
+      <div class="top-actions">${installButton()}<div class="user-chip">${avatar(initials(state.user) || "V", false, state.profilePhoto)}<span>${esc(state.user)}</span></div><button class="icon-button" type="button" data-action="open-drawer" aria-label="Abrir menu">☰</button></div>
     </header>
     <main class="page-shell"><div class="content">${content}</div></main>
     <nav class="bottom-nav" aria-label="Navegação principal">
@@ -414,8 +442,8 @@ function drawer() {
     ["✉", "Fale Conosco", "contact"],
   ];
   return `<div class="drawer-backdrop" data-action="close-drawer"></div><aside class="drawer" aria-label="Menu">
-    <div class="drawer-head"><div class="brand-lockup"><span class="brand-mark">A</span><span class="brand-name">AutonoMe</span></div><button class="icon-button" data-action="close-drawer" aria-label="Fechar menu">×</button></div>
-    <div class="drawer-user">${avatar(initials(state.user), true)}<div><strong>${esc(state.user)}</strong><span>Minha conta</span></div></div>
+    <div class="drawer-head"><div class="brand-lockup"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div><button class="icon-button" data-action="close-drawer" aria-label="Fechar menu">×</button></div>
+    <div class="drawer-user">${avatar(initials(state.user), true, state.profilePhoto)}<div><strong>${esc(state.user)}</strong><span>Minha conta</span></div></div>
     <nav class="drawer-nav">${links.map(([icon, text, target]) => `<button class="drawer-link" data-action="${target}"><span>${icon}</span>${text}</button>`).join("")}
       <button class="drawer-link" data-action="${state.userRole === "provider" || state.userRole === "both" ? "my-services" : "offer-service"}"><span>✦</span>${state.userRole === "provider" || state.userRole === "both" ? "Meus serviços" : "Oferecer meus serviços"}</button>
       ${isInstalled() ? "" : `<button class="drawer-link" data-action="install-app"><span>↓</span>Instalar app</button>`}
@@ -482,31 +510,44 @@ function profileScreen() {
   const provider = state.provider;
   const ownProfile = state.user !== "Visitante" && state.view === "profile";
   const myListing = !ownProfile && state.user !== "Visitante" && provider.ownerId === state.userId;
-  const person = ownProfile ? { name: state.user, initials: initials(state.user), service: state.userRole === "provider" ? "Profissional autônomo" : state.userRole === "both" ? "Contratante e profissional autônomo" : "Contratante", location: state.ownListings[0]?.location || "Cidade - Estado", about: "Encontre profissionais ou divulgue os serviços que você oferece.", rating: "—" } : provider;
-  return `<section class="card profile-hero">${avatar(person.initials, true)}<div><p class="eyebrow">${ownProfile ? "Meu perfil" : "Profissional"}</p><h1>${esc(person.name)}</h1><p>${esc(person.location)}</p></div></section>
-    ${ownProfile ? `<section class="card profile-block"><h3>Como você quer usar o AutonoMe?</h3>${roleOptions(state.userRole)}<button class="text-button" data-action="offer-service">Cadastrar um serviço →</button></section>${state.ownListings.length ? sectionHeading("Meus serviços publicados", `${state.ownListings.length} anúncios`, `<button class="text-button" data-action="my-services">Gerenciar ↗</button>` ) + `<div class="listing-list">${state.ownListings.slice(0, 3).map((listing) => providerCard(listing)).join("")}</div>` : ""}<section class="card profile-block"><h3>Preferências</h3><button class="text-button" data-action="settings">Configurações →</button></section>` : `<section class="card profile-block"><div class="card-top"><h3>Sobre o perfil</h3><span class="status done">Novo</span></div><p>${esc(person.about)}</p></section><section class="card profile-block"><h3>Serviço</h3><p>${esc(person.service)}<br>${esc(person.price)}</p></section>
+  const person = ownProfile ? { name: state.user, initials: initials(state.user), service: state.userRole === "provider" ? "Profissional autônomo" : state.userRole === "both" ? "Contratante e profissional autônomo" : "Contratante", location: state.profileLocation || state.ownListings[0]?.location || "Adicione sua cidade", about: state.profileBio || "Conte um pouco sobre você e os serviços que oferece.", profilePhoto: state.profilePhoto } : provider;
+  return `<section class="card profile-hero ${ownProfile ? "my-profile-hero" : ""}">${avatar(person.initials, true, person.profilePhoto)}<div class="profile-hero-copy"><p class="eyebrow">${ownProfile ? "Meu perfil" : "Profissional"}</p><h1>${esc(person.name)}</h1><p>${esc(person.location)}</p>${ownProfile ? `<span class="profile-role-pill">${esc(person.service)}</span>` : ""}</div>${ownProfile ? `<button class="button secondary small profile-edit-button" type="button" data-action="edit-profile">Editar perfil</button>` : ""}</section>
+    ${ownProfile ? `<section class="card profile-block"><div class="card-top"><div><p class="eyebrow">Sobre mim</p><h3>Meu perfil</h3></div><button class="text-button" type="button" data-action="edit-profile">Editar</button></div><p>${esc(person.about)}</p></section><section class="card profile-block"><div class="card-top"><div><p class="eyebrow">Minha conta</p><h3>Como você quer usar o AutonoMe?</h3></div></div>${roleOptions(state.userRole)}<button class="text-button" data-action="offer-service">Cadastrar um serviço →</button></section>${state.ownListings.length ? sectionHeading("Meus serviços publicados", `${state.ownListings.length} anúncios`, `<button class="text-button" data-action="my-services">Gerenciar ↗</button>` ) + `<div class="listing-list">${state.ownListings.slice(0, 3).map((listing) => providerCard(listing)).join("")}</div>` : ""}<section class="card profile-block"><h3>Preferências</h3><button class="text-button" data-action="settings">Configurações →</button></section>` : `<section class="card profile-block"><div class="card-top"><h3>Sobre o perfil</h3><span class="status done">Novo</span></div>${person.profileBio ? `<p>${esc(person.profileBio)}</p>` : ""}<p>${esc(person.about)}</p></section><section class="card profile-block"><h3>Serviço</h3><p>${esc(person.service)}<br>${esc(person.price)}</p></section>
     <section class="card profile-block"><h3>Contato e contratação</h3><p>Envie um pedido pelo AutonoMe. O profissional poderá confirmar ou recusar; seus dados pessoais não são exibidos publicamente.</p></section>
     <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:10px">${myListing ? button("Gerenciar meus serviços", "my-services") : isProviderBooked(provider) ? button("Ver contratação ativa", "contracts", { variant: "secondary" }) : button(state.userRole === "provider" ? "Ative também o perfil contratante" : "Solicitar contratação", "calendar", { disabled: state.userRole === "provider" })}${myListing || isProviderBooked(provider) ? "" : button(state.favorites.some((item) => item.id === provider.id) ? "♥ Salvo nos favoritos" : "♡ Salvar nos favoritos", "favorite-current", { variant: "secondary" })}</div>`}`;
 }
 
+function editProfileScreen() {
+  return `<button class="text-button back-link" type="button" data-action="profile">← Voltar ao perfil</button><p class="eyebrow">Sua identidade no AutonoMe</p><h1>Editar perfil</h1><p class="lead">Atualize as informações que outros usuários veem sobre você.</p>
+    <section class="card profile-editor-card"><div class="profile-photo-editor"><span class="profile-photo-preview">${avatar(initials(state.user), true, state.profilePhoto)}</span><div><strong>Sua foto</strong><p>Uma foto ajuda as pessoas a reconhecerem você.</p><label class="button secondary small profile-photo-label" for="profile-photo">Escolher foto<input id="profile-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" hidden></label><button class="text-button" type="button" data-action="remove-profile-photo">Remover foto</button></div></div>
+    <form class="form-stack" data-form="profile"><input type="hidden" name="profilePhoto" value="${esc(state.profilePhoto)}">
+      <div class="field"><label for="profile-name">Nome de exibição</label><input id="profile-name" name="name" maxlength="120" autocomplete="name" value="${esc(state.user)}" required></div>
+      <div class="field"><label for="profile-location">Cidade e estado</label><input id="profile-location" name="profileLocation" maxlength="120" value="${esc(state.profileLocation)}" placeholder="Ex.: São Paulo, SP"></div>
+      <div class="field"><label for="profile-bio">Sobre você</label><textarea id="profile-bio" name="profileBio" maxlength="500" rows="5" placeholder="Conte um pouco sobre você e seu trabalho.">${esc(state.profileBio)}</textarea></div>
+      <button class="button" type="submit">Salvar alterações</button>
+    </form></section>`;
+}
+
 function providerSetupScreen() {
   const selectedCategory = categories.find((item) => item.name === state.offerCategory) || categories[0];
-  return `<p class="eyebrow">Trabalhe por conta própria</p><h1>Ofereça seus serviços</h1><p class="lead">Crie seu anúncio para que clientes da sua região possam encontrar você.</p>
+  const existing = state.ownListings.find((item) => item.id === state.editingListingId);
+  const serviceInCategory = existing && selectedCategory.services.includes(existing.service);
+  return `<button class="text-button back-link" type="button" data-action="cancel-listing-edit">← Voltar aos meus serviços</button><p class="eyebrow">Trabalhe por conta própria</p><h1>${existing ? "Editar serviço" : "Ofereça seus serviços"}</h1><p class="lead">${existing ? "Atualize os detalhes do anúncio que os clientes encontram." : "Crie seu anúncio para que clientes da sua região possam encontrar você."}</p>
     <section class="card profile-block"><form class="form-stack" data-form="offer">
       <div class="field"><label for="offer-category">Área de atuação</label><select id="offer-category" name="category" required>${categories.map((category) => `<option value="${esc(category.name)}" ${selectedCategory.name === category.name ? "selected" : ""}>${esc(category.name)}</option>`).join("")}</select></div>
-      <div class="field"><label for="offer-service">Serviço oferecido</label><select id="offer-service" name="service" required>${selectedCategory.services.map((service) => `<option value="${esc(service)}">${esc(service)}</option>`).join("")}<option value="__custom__">Outro serviço (digitar nome)</option></select></div>
-      <div class="field custom-service-field" hidden><label for="offer-custom-service">Nome do serviço</label><input id="offer-custom-service" name="customService" placeholder="Ex.: conserto de bicicletas"></div>
-      <div class="field"><label for="offer-location">Cidade e estado</label><input id="offer-location" name="location" autocomplete="address-level2" placeholder="Ex.: São Paulo, SP" required></div>
-      <div class="field"><label for="offer-price">Valor ou forma de cobrança</label><input id="offer-price" name="price" placeholder="Ex.: a combinar ou valor por hora" required></div>
-      <div class="field"><label for="offer-about">Descreva seu serviço</label><textarea id="offer-about" name="about" rows="5" maxlength="500" placeholder="Conte sua experiência e o que você oferece aos clientes." required></textarea></div>
-      <button class="button" type="submit">Publicar meu serviço</button>
+      <div class="field"><label for="offer-service">Serviço oferecido</label><select id="offer-service" name="service" required>${selectedCategory.services.map((service) => `<option value="${esc(service)}" ${existing?.service === service ? "selected" : ""}>${esc(service)}</option>`).join("")}<option value="__custom__" ${existing && !serviceInCategory ? "selected" : ""}>Outro serviço (digitar nome)</option></select></div>
+      <div class="field custom-service-field" ${existing && !serviceInCategory ? "" : "hidden"}><label for="offer-custom-service">Nome do serviço</label><input id="offer-custom-service" name="customService" value="${existing && !serviceInCategory ? esc(existing.service) : ""}" placeholder="Ex.: conserto de bicicletas" ${existing && !serviceInCategory ? "required" : ""}></div>
+      <div class="field"><label for="offer-location">Cidade e estado</label><input id="offer-location" name="location" autocomplete="address-level2" value="${esc(existing?.location || "")}" placeholder="Ex.: São Paulo, SP" required></div>
+      <div class="field"><label for="offer-price">Valor ou forma de cobrança</label><input id="offer-price" name="price" value="${esc(existing?.price || "")}" placeholder="Ex.: a combinar ou valor por hora" required></div>
+      <div class="field"><label for="offer-about">Descreva seu serviço</label><textarea id="offer-about" name="about" rows="5" maxlength="500" placeholder="Conte sua experiência e o que você oferece aos clientes." required>${esc(existing?.about || "")}</textarea></div>
+      <button class="button" type="submit">${existing ? "Salvar serviço" : "Publicar meu serviço"}</button>
     </form></section>`;
 }
 
 function myServicesScreen() {
   return `<p class="eyebrow">Seu trabalho, sua vitrine</p><h1>Meus serviços</h1><p class="lead">Gerencie os anúncios que os clientes podem encontrar.</p>
     <div class="section-heading"><div><h2>Serviços publicados</h2><p>${state.ownListings.length} ${state.ownListings.length === 1 ? "anúncio" : "anúncios"}</p></div>${button("Adicionar serviço", "offer-service", { small: true })}</div>
-    <div class="listing-list">${state.ownListings.length ? state.ownListings.map((listing) => `<article class="listing-card">${avatar(listing.initials)}<div><h3>${esc(listing.service)}</h3><p>${esc(listing.category)} · ${esc(listing.location)}</p><div class="inline-meta"><span>${esc(listing.price)}</span></div></div><button class="button danger small" data-action="delete-listing" data-listing="${esc(listing.id)}">Excluir</button></article>`).join("") : `<section class="card empty-state"><div class="empty-icon">✦</div><h2>Você ainda não publicou serviços</h2><p>Cadastre seu primeiro serviço para aparecer para clientes da sua região.</p>${button("Cadastrar serviço", "offer-service")}</section>`}</div>`;
+    <div class="listing-list">${state.ownListings.length ? state.ownListings.map((listing) => `<article class="listing-card">${avatar(listing.initials, false, listing.profilePhoto)}<div><h3>${esc(listing.service)}</h3><p>${esc(listing.category)} · ${esc(listing.location)}</p><div class="inline-meta"><span>${esc(listing.price)}</span></div></div><span class="listing-actions"><button class="button secondary small" data-action="edit-listing" data-listing="${esc(listing.id)}">Editar</button><button class="button danger small" data-action="delete-listing" data-listing="${esc(listing.id)}">Excluir</button></span></article>`).join("") : `<section class="card empty-state"><div class="empty-icon">✦</div><h2>Você ainda não publicou serviços</h2><p>Cadastre seu primeiro serviço para aparecer para clientes da sua região.</p>${button("Cadastrar serviço", "offer-service")}</section>`}</div>`;
 }
 
 function calendarScreen() {
@@ -537,7 +578,7 @@ function contractsScreen() {
       const contractState = item.state.toLowerCase();
       const badge = contractState.includes("confirmado") ? "ok" : contractState.includes("cancel") || contractState.includes("terminado") || contractState.includes("entregue") || contractState.includes("concluído") || contractState.includes("negado") ? "done" : "";
         const canCancel = item.tab === "requested" && ["aguardando confirmação", "esperando confirmação", "confirmado"].includes(contractState);
-      return `<article class="card contract-card">${avatar(initials(item.name))}<div><h3>${esc(item.name)}</h3><p style="margin:0 0 7px;color:var(--muted);font-size:12px">${esc(item.service)} · ${esc(item.date)}</p><span class="status ${badge}">${esc(item.state)}</span></div><span class="contract-actions"><button class="button secondary small" data-action="contract-detail" data-contract="${esc(item.id)}">Detalhes</button>${canCancel ? `<button class="button danger small" data-action="cancel-contract" data-contract="${esc(item.id)}">Cancelar</button>` : ""}${item.tab === "hired" && item.state === "Aguardando confirmação" ? `<button class="button small" data-action="respond-contract" data-status="confirm" data-contract="${esc(item.id)}">Aceitar</button><button class="button danger small" data-action="respond-contract" data-status="decline" data-contract="${esc(item.id)}">Recusar</button>` : ""}</span></article>`;
+      return `<article class="card contract-card">${avatar(initials(item.name), false, item.profilePhoto)}<div><h3>${esc(item.name)}</h3><p style="margin:0 0 7px;color:var(--muted);font-size:12px">${esc(item.service)} · ${esc(item.date)}</p><span class="status ${badge}">${esc(item.state)}</span></div><span class="contract-actions"><button class="button secondary small" data-action="contract-detail" data-contract="${esc(item.id)}">Detalhes</button>${canCancel ? `<button class="button danger small" data-action="cancel-contract" data-contract="${esc(item.id)}">Cancelar</button>` : ""}${item.tab === "hired" && item.state === "Aguardando confirmação" ? `<button class="button small" data-action="respond-contract" data-status="confirm" data-contract="${esc(item.id)}">Aceitar</button><button class="button danger small" data-action="respond-contract" data-status="decline" data-contract="${esc(item.id)}">Recusar</button>` : ""}</span></article>`;
     }).join("") : `<div class="card empty-state"><div class="empty-icon">${state.contractTab === "hired" ? "✦" : "▤"}</div><h3>${state.contractTab === "hired" ? "Nenhum pedido para prestar serviço" : "Nenhuma contratação por enquanto"}</h3><p>${state.contractTab === "hired" ? "Quando um cliente solicitar um serviço seu, o pedido aparecerá aqui." : "Encontre um profissional, escolha um horário e acompanhe seu pedido nesta tela."}</p>${state.contractTab === "requested" ? `<button class="button" data-action="categories">Explorar serviços</button>` : ""}</div>`}</div>`;
 }
 
@@ -546,21 +587,28 @@ function contractDetailScreen() {
   const provider = allListings().find((item) => item.id === contract?.listingId) || state.provider || {};
   if (!contract) return `<div class="card empty-state"><h2>Contrato não encontrado</h2>${button("Voltar aos contratos", "contracts", { variant: "secondary" })}</div>`;
   return `<p class="eyebrow">Detalhes do serviço</p><h1>Especificações</h1>
-    <section class="card profile-hero">${avatar(initials(contract.name), true)}<div><p class="eyebrow">Serviço combinado</p><h1>${esc(contract.name)}</h1><p>${esc(contract.service)} · ${esc(contract.date)}</p></div></section>
+    <section class="card profile-hero">${avatar(initials(contract.name), true, contract.profilePhoto)}<div><p class="eyebrow">Serviço combinado</p><h1>${esc(contract.name)}</h1><p>${esc(contract.service)} · ${esc(contract.date)}</p></div></section>
     <section class="card profile-block"><span class="status ${contract.state === "Confirmado" ? "ok" : ["Cancelada", "Pedido negado", "Concluído"].includes(contract.state) ? "done" : ""}">${esc(contract.state)}</span><h3 style="margin-top:18px">Sobre o serviço</h3><p>${esc(provider.about || "Descrição do serviço a ser ou que foi prestado.")}</p>${contract.details ? `<h3 style="margin-top:20px">Mensagem do cliente</h3><p>${esc(contract.details)}</p>` : ""}<h3 style="margin-top:20px">Profissional</h3><p>${esc(contract.service)} · ${esc(provider.location || "Cidade - Estado")}</p></section>
-    <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap">${button("Voltar aos contratos", "contracts", { variant: "secondary" })}${contract.tab === "requested" && ["Aguardando confirmação", "Confirmado"].includes(contract.state) ? `<button class="button danger" type="button" data-action="cancel-contract" data-contract="${esc(contract.id)}">Cancelar contratação</button>` : ""}${contract.tab === "hired" && contract.state === "Aguardando confirmação" ? `<button class="button" type="button" data-action="respond-contract" data-status="confirm" data-contract="${esc(contract.id)}">Aceitar pedido</button><button class="button danger" type="button" data-action="respond-contract" data-status="decline" data-contract="${esc(contract.id)}">Recusar pedido</button>` : ""}</div>`;
+    <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap">${button("Voltar aos contratos", "contracts", { variant: "secondary" })}${!["Cancelada", "Pedido negado"].includes(contract.state) ? `<button class="button" type="button" data-action="open-contract-chat" data-contract="${esc(contract.id)}">Conversar</button>` : ""}${contract.tab === "requested" && ["Aguardando confirmação", "Confirmado"].includes(contract.state) ? `<button class="button danger" type="button" data-action="cancel-contract" data-contract="${esc(contract.id)}">Cancelar contratação</button>` : ""}${contract.tab === "hired" && contract.state === "Aguardando confirmação" ? `<button class="button" type="button" data-action="respond-contract" data-status="confirm" data-contract="${esc(contract.id)}">Aceitar pedido</button><button class="button danger" type="button" data-action="respond-contract" data-status="decline" data-contract="${esc(contract.id)}">Recusar pedido</button>` : ""}</div>`;
 }
 
 function messagesScreen() {
-  return `<p class="eyebrow">Contato seguro</p><h1>Mensagens</h1><section class="card empty-state"><div class="empty-icon">☷</div><h2>Converse sobre uma contratação</h2><p>Para entrar em contato, envie um pedido pelo perfil do profissional. O pedido aparecerá em Contratos para você e para o profissional.</p><button class="button" data-action="categories">Encontrar um profissional</button></section>`;
+  return `<p class="eyebrow">Contato seguro</p><h1>Mensagens</h1><p class="lead">Converse com segurança sobre os serviços contratados pelo AutonoMe.</p>
+    ${state.conversations.length ? `<div class="conversation-list">${state.conversations.map((conversation) => `<button class="card conversation-card" type="button" data-action="open-contract-chat" data-contract="${esc(conversation.contractId)}">${avatar(initials(conversation.name), false, conversation.profilePhoto)}<span class="conversation-copy"><strong>${esc(conversation.name)}</strong><span>${esc(conversation.service)} · ${esc(conversation.state)}</span><span class="conversation-preview">${esc(conversation.preview)}</span></span><span class="conversation-meta">${conversation.unreadCount ? `<span class="unread-badge">${conversation.unreadCount}</span>` : ""}<span class="message-time">${formatMessageTime(conversation.time)}</span><span class="conversation-chevron">›</span></span></button>`).join("")}</div>` : `<section class="card empty-state"><div class="empty-icon">☷</div><h2>Nenhuma conversa ainda</h2><p>Depois que você enviar um pedido de contratação, poderá conversar com o profissional por aqui.</p><button class="button" data-action="categories">Encontrar um profissional</button></section>`}`;
 }
 
 function chatScreen() {
-  return `<p class="eyebrow">Mensagens</p><h1>Conversa</h1><section class="card chat-panel">
-    <div class="chat-head">${avatar(state.activeChat.initials)}<div><strong>${esc(state.activeChat.name)}</strong><p>Conversa pelo AutonoMe</p></div></div>
-    <div class="chat-messages">${state.chatMessages.map((message, index) => `<div class="chat-bubble ${index === state.chatMessages.length - 1 && state.chatMessages.length > 1 ? "mine" : ""}">${esc(message)}</div>`).join("")}</div>
-    <form class="chat-form" data-form="chat"><input name="message" aria-label="Escreva sua mensagem" placeholder="Escreva uma mensagem..." required autocomplete="off"><button class="button small" type="submit" aria-label="Enviar mensagem">Enviar</button></form>
+  if (!state.activeChat) return `<section class="card empty-state"><h2>Conversa não encontrada</h2>${button("Voltar às mensagens", "messages", { variant: "secondary" })}</section>`;
+  return `<button class="text-button back-link" type="button" data-action="messages">← Voltar às mensagens</button><p class="eyebrow">Sobre ${esc(state.activeChat.service)}</p><h1>Conversa</h1><section class="card chat-panel">
+    <div class="chat-head">${avatar(initials(state.activeChat.name), false, state.activeChat.profilePhoto)}<div><strong>${esc(state.activeChat.name)}</strong><p>${esc(state.activeChat.service)} · ${esc(state.activeChat.state)}</p></div></div>
+    <div class="chat-messages" aria-live="polite">${state.chatMessages.length ? state.chatMessages.map((message) => `<div class="chat-message-row ${message.mine ? "mine" : ""}"><div class="chat-bubble">${esc(message.body)}<span class="chat-message-time">${formatMessageTime(message.createdAt)}</span></div></div>`).join("") : `<div class="chat-empty"><span aria-hidden="true">✦</span><strong>Inicie a conversa</strong><p>Combine os detalhes do serviço com ${esc(state.activeChat.name)}.</p></div>`}</div>
+    <form class="chat-form" data-form="chat"><input name="message" aria-label="Escreva sua mensagem" maxlength="2000" placeholder="Escreva uma mensagem..." required autocomplete="off"><button class="button small" type="submit" aria-label="Enviar mensagem">Enviar</button></form>
   </section>`;
+}
+
+function formatMessageTime(timestamp) {
+  if (!timestamp) return "";
+  return new Date(Number(timestamp) * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
 function notificationsScreen() {
@@ -573,7 +621,7 @@ function settingsScreen() {
     <section class="card profile-block"><h3>Como você quer usar o app?</h3><p>Você pode alterar esse perfil quando quiser.</p>${roleOptions(state.userRole)}</section>
     <section class="card profile-block"><h3>Preferências</h3>${Object.entries(state.settings).map(([name, enabled]) => `<div class="switch-row"><div class="switch-copy"><strong>${esc(name)}</strong><span>${name === "Modo Escuro" ? "Ajuste a aparência do aplicativo." : name === "Notificações" ? "Receba novidades sobre seus serviços." : `Controle o acesso do app a ${name.replace("Permitir ", "").toLowerCase()}.`}</span></div><button class="switch" type="button" role="switch" aria-checked="${enabled}" aria-label="${esc(name)}" data-action="toggle-setting" data-setting="${esc(name)}"></button></div>`).join("")}</section>
     <section class="card profile-block danger-zone"><h3>Desativar conta</h3><p>Sua conta será movida para a lista segura de usuários desativados. Você precisará confirmar a ação com um código enviado ao e-mail cadastrado.</p>${button("Solicitar desativação", "delete-account", { variant: "danger" })}</section>
-    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.2.0</p></section>`;
+    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.4.0</p></section>`;
 }
 
 function favoritesScreen() {
@@ -620,6 +668,7 @@ function pageContent() {
     case "listings": return listingsScreen();
     case "professionals": return professionalsScreen();
     case "profile": return profileScreen();
+    case "edit-profile": return editProfileScreen();
     case "provider-profile": return profileScreen();
     case "calendar": return calendarScreen();
     case "contracts": return contractsScreen();
@@ -641,11 +690,35 @@ function pageContent() {
 }
 
 function render() {
+  clearInterval(chatPollTimer);
   document.body.classList.toggle("dark", Boolean(state.settings["Modo Escuro"]));
   saveAppState();
   app.innerHTML = state.view === "auth" ? authScreen()
     : state.view === "verify-email" ? emailVerificationScreen()
       : shell(pageContent());
+  if (state.view === "chat") {
+    const messageList = document.querySelector(".chat-messages");
+    if (messageList) messageList.scrollTop = messageList.scrollHeight;
+    chatPollTimer = setInterval(async () => {
+      if (chatPollBusy || document.hidden || !state.activeConversationId) return;
+      chatPollBusy = true;
+      try {
+        const result = await apiRequest(`/api/messages?contractId=${encodeURIComponent(state.activeConversationId)}`, { method: "GET", headers: {} });
+        const previousLastId = state.chatMessages[state.chatMessages.length - 1]?.id || "";
+        const nextLastId = result.messages[result.messages.length - 1]?.id || "";
+        state.activeChat = result.conversation;
+        if (previousLastId !== nextLastId || state.chatMessages.length !== result.messages.length) {
+          state.chatMessages = result.messages;
+          render();
+        }
+      } catch (error) {
+        clearInterval(chatPollTimer);
+        showToast(error.message);
+      } finally {
+        chatPollBusy = false;
+      }
+    }, 5000);
+  }
   initializeAuth();
 }
 
@@ -670,6 +743,25 @@ app.addEventListener("change", async (event) => {
     state.offerService = "";
     render();
   }
+  if (event.target.matches("#profile-photo")) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10 * 1024 * 1024) {
+      showToast("Escolha uma foto JPEG, PNG ou WebP de até 10 MB.");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const photo = await compressProfilePhoto(file);
+      state.profilePhoto = photo;
+      document.querySelector('input[name="profilePhoto"]').value = photo;
+      document.querySelector(".profile-photo-preview").innerHTML = avatar(initials(state.user), true, photo);
+    } catch (error) {
+      showToast(error.message);
+      event.target.value = "";
+    }
+    return;
+  }
   if (event.target.matches("#offer-service")) {
     const customField = document.querySelector(".custom-service-field");
     const customInput = document.querySelector("#offer-custom-service");
@@ -679,6 +771,33 @@ app.addEventListener("change", async (event) => {
     if (isCustom) customInput.focus();
   }
 });
+
+async function compressProfilePhoto(file) {
+  const source = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Não foi possível ler a foto selecionada."));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("A foto selecionada não pôde ser aberta."));
+    element.src = source;
+  });
+  const scale = Math.min(1, 640 / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Não foi possível preparar a foto neste dispositivo.");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  for (const quality of [0.82, 0.68, 0.54, 0.4]) {
+    const dataUrl = canvas.toDataURL("image/jpeg", quality);
+    if (dataUrl.length <= 385 * 1024) return dataUrl;
+  }
+  throw new Error("A foto ficou muito grande mesmo após a compressão. Escolha outra imagem.");
+}
 
 function showToast(message) {
   document.querySelector(".toast")?.remove();
@@ -799,11 +918,35 @@ app.addEventListener("click", async (event) => {
       openProvider(target.dataset.provider || allListings()[0]?.id);
       return;
     case "offer-service":
+      state.editingListingId = "";
       state.view = "provider-setup";
       state.offerCategory = state.ownListings[0]?.category || categories[0].name;
       state.drawerOpen = false;
       break;
     case "my-services": state.view = "my-services"; state.drawerOpen = false; break;
+    case "edit-profile":
+      state.view = "edit-profile";
+      break;
+    case "remove-profile-photo":
+      state.profilePhoto = "";
+      document.querySelector('input[name="profilePhoto"]').value = "";
+      document.querySelector(".profile-photo-preview").innerHTML = avatar(initials(state.user), true);
+      break;
+    case "cancel-listing-edit":
+      state.editingListingId = "";
+      state.view = "my-services";
+      break;
+    case "edit-listing": {
+      const listing = state.ownListings.find((item) => item.id === target.dataset.listing);
+      if (!listing) {
+        showToast("Não foi possível encontrar esse anúncio.");
+        return;
+      }
+      state.editingListingId = listing.id;
+      state.offerCategory = listing.category;
+      state.view = "provider-setup";
+      break;
+    }
     case "delete-listing": {
       if (!window.confirm("Deseja excluir este anúncio?")) return;
       try {
@@ -836,12 +979,19 @@ app.addEventListener("click", async (event) => {
       state.user = "Visitante";
       state.userId = "";
       state.userRole = "client";
+      state.profileBio = "";
+      state.profileLocation = "";
+      state.profilePhoto = "";
       state.publicListings = [];
       state.userEmail = "";
       state.ownListings = [];
       state.favorites = [];
       state.contracts = [];
       state.messages = [];
+      state.conversations = [];
+      state.activeChat = null;
+      state.activeConversationId = "";
+      state.chatMessages = [];
       state.notifications = [];
       state.view = "auth";
       state.authMode = "login";
@@ -964,21 +1114,22 @@ app.addEventListener("click", async (event) => {
       }
       break;
     }
-    case "messages": state.view = "messages"; break;
-    case "open-chat": {
-      const person = target.dataset.person;
-      state.activeChat = state.messages.find((item) => item.name === person) || { name: person, initials: initials(person), preview: "", time: "Agora" };
-      state.chatMessages = [`Olá, ${state.activeChat.name}! Vamos conversar sobre o serviço.`];
-      state.view = "chat";
+    case "messages":
+      try {
+        await refreshConversations();
+      } catch (error) {
+        showToast(error.message);
+      }
+      state.view = "messages";
       break;
-    }
-    case "open-chat-provider": {
-      const person = state.contracts.find((item) => item.id === state.detailId)?.name || state.provider.name;
-      state.activeChat = state.messages.find((item) => item.name === person) || { name: person, initials: initials(person), preview: "", time: "Agora" };
-      state.chatMessages = [`Olá, ${person}! Vamos conversar sobre o serviço.`];
-      state.view = "chat";
+    case "open-contract-chat":
+      try {
+        await openConversation(target.dataset.contract);
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       break;
-    }
     case "notifications": state.view = "notifications"; state.drawerOpen = false; break;
     case "clear-notifications": state.notifications = []; break;
     case "accept-request":
@@ -1148,29 +1299,62 @@ app.addEventListener("submit", async (event) => {
         about: String(data.get("about") || "").trim(),
         price: String(data.get("price") || "").trim(),
       };
+      const editingListingId = state.editingListingId;
       try {
-        const result = await apiRequest("/api/listings", {
+        const result = await apiRequest(editingListingId ? `/api/listings/${encodeURIComponent(editingListingId)}` : "/api/listings", {
           method: "POST",
           body: JSON.stringify(listing),
         });
-        state.userRole = result.user.role;
+        if (result.user) state.userRole = result.user.role;
         await refreshRemoteData();
       } catch (error) {
         showToast(error.message);
         return;
       }
+      state.editingListingId = "";
       state.view = "my-services";
-      showToast("Seu serviço foi publicado!");
+      showToast(editingListingId ? "Serviço atualizado." : "Seu serviço foi publicado!");
+      break;
+    }
+    case "profile": {
+      try {
+        const result = await apiRequest("/api/auth/profile", {
+          method: "POST",
+          body: JSON.stringify({
+            name: String(data.get("name") || "").trim(),
+            profileBio: String(data.get("profileBio") || "").trim(),
+            profileLocation: String(data.get("profileLocation") || "").trim(),
+            profilePhoto: String(data.get("profilePhoto") || ""),
+          }),
+        });
+        state.user = result.user.name;
+        state.profileBio = result.user.profileBio || "";
+        state.profileLocation = result.user.profileLocation || "";
+        state.profilePhoto = result.user.profilePhoto || "";
+        await refreshRemoteData();
+        state.view = "profile";
+        showToast("Seu perfil foi atualizado.");
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       break;
     }
     case "chat": {
       const message = String(data.get("message") || "").trim();
       if (!message) return;
-      state.chatMessages.push(message);
-      const index = state.messages.findIndex((item) => item.name === state.activeChat.name);
-      const updated = { ...state.activeChat, preview: message, time: "Agora" };
-      if (index >= 0) state.messages.splice(index, 1);
-      state.messages.unshift(updated);
+      try {
+        await apiRequest("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({ contractId: state.activeConversationId, body: message }),
+        });
+        await openConversation(state.activeConversationId);
+        await refreshConversations();
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+      break;
       break;
     }
     case "contact":

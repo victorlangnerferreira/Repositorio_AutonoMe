@@ -1,4 +1,4 @@
-const CACHE_NAME = "autonome-shell-v9";
+const CACHE_NAME = "autonome-shell-v10";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -6,6 +6,7 @@ const APP_SHELL = [
   "./app.js",
   "./manifest.webmanifest",
   "./icon.svg",
+  "./logo_autonome.png",
   "./icon-192.png",
   "./icon-512.png",
   "./apple-touch-icon.png",

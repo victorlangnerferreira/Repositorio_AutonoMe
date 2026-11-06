@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import base64
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 ROOT = Path(__file__).resolve().parent
@@ -38,6 +39,8 @@ if not APP_SECRET:
 OTP_LIFETIME_SECONDS = 10 * 60
 SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 OTP_MAX_ATTEMPTS = 5
+MAX_JSON_BODY_BYTES = 1_000_000
+MAX_PROFILE_PHOTO_BYTES = 300_000
 SMTP_NOT_CONFIGURED_MESSAGE = (
     "O envio de e-mail não está configurado. No Render Free, configure BREVO_API_KEY e "
     "EMAIL_FROM em Environment usando um remetente verificado no Brevo. Em outra hospedagem, "
@@ -89,7 +92,10 @@ def init_db():
                 role TEXT NOT NULL CHECK (role IN ('client', 'provider', 'both')),
                 password_salt TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                profile_bio TEXT NOT NULL DEFAULT '',
+                profile_location TEXT NOT NULL DEFAULT '',
+                profile_photo TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS disabled_users (
                 id TEXT PRIMARY KEY,
@@ -142,12 +148,23 @@ def init_db():
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+                sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER
+            );
             CREATE INDEX IF NOT EXISTS email_verifications_lookup
                 ON email_verifications(email, purpose, created_at);
             CREATE INDEX IF NOT EXISTS sessions_user_lookup ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS listings_public_lookup ON listings(active, category, service);
             CREATE INDEX IF NOT EXISTS contracts_client_lookup ON contracts(client_id, created_at);
             CREATE INDEX IF NOT EXISTS contracts_provider_lookup ON contracts(provider_id, created_at);
+            CREATE INDEX IF NOT EXISTS messages_conversation_lookup ON messages(contract_id, created_at);
+            CREATE INDEX IF NOT EXISTS messages_inbox_lookup ON messages(recipient_id, read_at, created_at);
             CREATE UNIQUE INDEX IF NOT EXISTS contracts_one_active_per_listing
                 ON contracts(listing_id)
                 WHERE listing_id IS NOT NULL AND state IN ('Aguardando confirmação', 'Confirmado');
@@ -156,6 +173,10 @@ def init_db():
         contract_columns = {row["name"] for row in db.execute("PRAGMA table_info(contracts)")}
         if "details" not in contract_columns:
             db.execute("ALTER TABLE contracts ADD COLUMN details TEXT NOT NULL DEFAULT ''")
+        user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+        for column in ("profile_bio", "profile_location", "profile_photo"):
+            if column not in user_columns:
+                db.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
 
 def only_digits(value):
@@ -302,7 +323,15 @@ def establish_session(db, user_id):
 
 
 def public_user(user):
-    return {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]}
+    return {
+        "id": user["id"],
+        "name": user["name"],
+        "email": user["email"],
+        "role": user["role"],
+        "profileBio": user["profile_bio"],
+        "profileLocation": user["profile_location"],
+        "profilePhoto": user["profile_photo"],
+    }
 
 
 def public_listing(row):
@@ -318,6 +347,9 @@ def public_listing(row):
         "about": row["about"],
         "price": row["price"],
         "isBooked": bool(row["is_booked"]),
+        "profileBio": row["profile_bio"],
+        "profileLocation": row["profile_location"],
+        "profilePhoto": row["profile_photo"],
     }
 
 
@@ -341,6 +373,19 @@ def public_contract(row, current_user_id):
         "about": row["about"],
         "clientName": row["client_name"],
         "providerName": row["provider_name"],
+        "profilePhoto": row["provider_photo"] if is_client else row["client_photo"],
+    }
+
+
+def public_message(row, current_user_id):
+    return {
+        "id": row["id"],
+        "contractId": row["contract_id"],
+        "senderId": row["sender_id"],
+        "senderName": row["sender_name"],
+        "body": row["body"],
+        "createdAt": row["created_at"],
+        "mine": row["sender_id"] == current_user_id,
     }
 
 
@@ -373,7 +418,7 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as error:
             raise APIError(HTTPStatus.BAD_REQUEST, "Requisição inválida.") from error
-        if length < 1 or length > 16_384:
+        if length < 1 or length > MAX_JSON_BODY_BYTES:
             raise APIError(HTTPStatus.BAD_REQUEST, "Tamanho de requisição inválido.")
         try:
             payload = json.loads(self.rfile.read(length))
@@ -420,9 +465,19 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             else:
                 self.send_json(HTTPStatus.OK, {"user": public_user(user)})
             return
-        if request_path in {"/api/listings", "/api/contracts"}:
+        if request_path in {"/api/listings", "/api/contracts", "/api/messages", "/api/auth/profile"}:
             try:
-                self.send_json(HTTPStatus.OK, self.get_app_data(request_path))
+                if request_path == "/api/auth/profile":
+                    with database() as db:
+                        user = self.require_session_user(db)
+                        response = {"user": public_user(user)}
+                elif request_path == "/api/messages":
+                    query = urlsplit(self.path).query
+                    contract_id = parse_qs(query).get("contractId", [""])[0]
+                    response = self.get_message_data(contract_id)
+                else:
+                    response = self.get_app_data(request_path)
+                self.send_json(HTTPStatus.OK, response)
             except APIError as error:
                 self.send_json(error.status, {"error": str(error)})
             except Exception:
@@ -433,7 +488,7 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             self.send_json(HTTPStatus.NOT_FOUND, {"error": "Endpoint não encontrado."})
             return
         allowed_files = {
-            "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg",
+            "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg", "logo_autonome.png",
             "icon-192.png", "icon-512.png", "apple-touch-icon.png", "service-worker.js",
         }
         asset = request_path.lstrip("/")
@@ -478,10 +533,17 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Não foi possível concluir a solicitação. Tente novamente."})
 
     def handle_api(self, path, payload):
+        if path == "/api/auth/profile":
+            return self.update_profile(payload)
         if path == "/api/listings":
             return self.create_listing(payload)
+        if path == "/api/messages":
+            return self.create_message(payload)
         if path == "/api/contracts":
             return self.create_contract(payload)
+        match = re.fullmatch(r"/api/listings/([0-9a-f-]+)", path)
+        if match:
+            return self.update_listing(match.group(1), payload)
         match = re.fullmatch(r"/api/contracts/([0-9a-f-]+)/status", path)
         if match:
             return self.update_contract_status(match.group(1), payload)
@@ -514,7 +576,7 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             user = self.require_session_user(db)
             if path == "/api/listings":
                 rows = db.execute(
-                    """SELECT listings.*, users.name,
+                    """SELECT listings.*, users.name, users.profile_bio, users.profile_location, users.profile_photo,
                               EXISTS(
                                   SELECT 1 FROM contracts
                                   WHERE contracts.listing_id = listings.id
@@ -526,7 +588,8 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                 return {"listings": [public_listing(row) for row in rows]}
             rows = db.execute(
                 """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
-                          clients.name AS client_name, providers.name AS provider_name
+                          clients.name AS client_name, clients.profile_photo AS client_photo,
+                          providers.name AS provider_name, providers.profile_photo AS provider_photo
                    FROM contracts
                    LEFT JOIN listings ON listings.id = contracts.listing_id
                    JOIN users AS clients ON clients.id = contracts.client_id
@@ -536,6 +599,106 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                 (user["id"], user["id"]),
             ).fetchall()
             return {"contracts": [public_contract(row, user["id"]) for row in rows]}
+
+    def get_message_data(self, contract_id):
+        with database() as db:
+            user = self.require_session_user(db)
+            if not contract_id:
+                rows = db.execute(
+                    """SELECT contracts.id AS contract_id, contracts.service, contracts.date, contracts.state,
+                              CASE WHEN contracts.client_id = ? THEN providers.name ELSE clients.name END AS other_name,
+                              CASE WHEN contracts.client_id = ? THEN providers.profile_photo ELSE clients.profile_photo END AS other_photo,
+                              (SELECT messages.body FROM messages WHERE messages.contract_id = contracts.id
+                               ORDER BY messages.created_at DESC, messages.rowid DESC LIMIT 1) AS preview,
+                              (SELECT messages.created_at FROM messages WHERE messages.contract_id = contracts.id
+                               ORDER BY messages.created_at DESC, messages.rowid DESC LIMIT 1) AS last_message_at,
+                              (SELECT COUNT(*) FROM messages WHERE messages.contract_id = contracts.id
+                               AND messages.recipient_id = ? AND messages.read_at IS NULL) AS unread_count
+                       FROM contracts
+                       JOIN users AS clients ON clients.id = contracts.client_id
+                       JOIN users AS providers ON providers.id = contracts.provider_id
+                       WHERE (contracts.client_id = ? OR contracts.provider_id = ?)
+                         AND contracts.state NOT IN ('Cancelada', 'Pedido negado')
+                       ORDER BY COALESCE(last_message_at, contracts.updated_at) DESC""",
+                    (user["id"], user["id"], user["id"], user["id"], user["id"]),
+                ).fetchall()
+                return {"conversations": [{
+                    "contractId": row["contract_id"],
+                    "service": row["service"],
+                    "date": row["date"],
+                    "state": row["state"],
+                    "name": row["other_name"],
+                    "profilePhoto": row["other_photo"],
+                    "preview": row["preview"] or f"Conversa sobre {row['service']}",
+                    "time": row["last_message_at"] or 0,
+                    "unreadCount": row["unread_count"],
+                } for row in rows]}
+
+            contract = db.execute(
+                """SELECT * FROM contracts WHERE id = ?
+                   AND (client_id = ? OR provider_id = ?)
+                   AND state NOT IN ('Cancelada', 'Pedido negado')""",
+                (contract_id, user["id"], user["id"]),
+            ).fetchone()
+            if contract is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Conversa não encontrada ou indisponível.")
+            db.execute(
+                """UPDATE messages SET read_at = ?
+                   WHERE contract_id = ? AND recipient_id = ? AND read_at IS NULL""",
+                (int(time.time()), contract_id, user["id"]),
+            )
+            rows = db.execute(
+                """SELECT messages.*, users.name AS sender_name
+                   FROM messages JOIN users ON users.id = messages.sender_id
+                   WHERE messages.contract_id = ?
+                   ORDER BY messages.created_at, messages.rowid""",
+                (contract_id,),
+            ).fetchall()
+            other_id = contract["provider_id"] if contract["client_id"] == user["id"] else contract["client_id"]
+            other = db.execute("SELECT id, name, profile_photo FROM users WHERE id = ?", (other_id,)).fetchone()
+            return {
+                "conversation": {
+                    "contractId": contract["id"],
+                    "service": contract["service"],
+                    "date": contract["date"],
+                    "state": contract["state"],
+                    "name": other["name"],
+                    "profilePhoto": other["profile_photo"],
+                },
+                "messages": [public_message(row, user["id"]) for row in rows],
+            }
+
+    def create_message(self, payload):
+        contract_id = str(payload.get("contractId", ""))
+        body = str(payload.get("body", "")).strip()
+        if not re.fullmatch(r"[0-9a-f-]{36}", contract_id):
+            raise APIError(HTTPStatus.BAD_REQUEST, "Conversa inválida.")
+        if not body or len(body) > 2_000:
+            raise APIError(HTTPStatus.BAD_REQUEST, "A mensagem deve ter entre 1 e 2.000 caracteres.")
+        with database() as db:
+            user = self.require_session_user(db)
+            contract = db.execute(
+                """SELECT * FROM contracts WHERE id = ?
+                   AND (client_id = ? OR provider_id = ?)
+                   AND state NOT IN ('Cancelada', 'Pedido negado')""",
+                (contract_id, user["id"], user["id"]),
+            ).fetchone()
+            if contract is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Conversa não encontrada ou indisponível.")
+            recipient_id = contract["provider_id"] if contract["client_id"] == user["id"] else contract["client_id"]
+            message_id = str(uuid.uuid4())
+            created_at = int(time.time())
+            db.execute(
+                """INSERT INTO messages (id, contract_id, sender_id, recipient_id, body, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (message_id, contract_id, user["id"], recipient_id, body, created_at),
+            )
+            message = db.execute(
+                """SELECT messages.*, users.name AS sender_name
+                   FROM messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?""",
+                (message_id,),
+            ).fetchone()
+        return HTTPStatus.CREATED, {"message": public_message(message, user["id"])}, []
 
     def create_listing(self, payload):
         category = str(payload.get("category", "")).strip()
@@ -566,11 +729,78 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             )
             updated_user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
             listing = db.execute(
-                """SELECT listings.*, users.name, 0 AS is_booked FROM listings
+                """SELECT listings.*, users.name, users.profile_bio, users.profile_location, users.profile_photo,
+                          0 AS is_booked FROM listings
                    JOIN users ON users.id = listings.user_id WHERE listings.id = ?""",
                 (listing_id,),
             ).fetchone()
         return HTTPStatus.CREATED, {"listing": public_listing(listing), "user": public_user(updated_user)}, []
+
+    def update_listing(self, listing_id, payload):
+        category = str(payload.get("category", "")).strip()
+        service = str(payload.get("service", "")).strip()
+        location = str(payload.get("location", "")).strip()
+        price = str(payload.get("price", "")).strip()
+        about = str(payload.get("about", "")).strip()
+        if not category or len(category) > 80:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe uma área de atuação válida.")
+        if not service or len(service) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe o serviço oferecido.")
+        if not location or len(location) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe sua cidade e estado.")
+        if not price or len(price) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe o valor ou a forma de cobrança.")
+        if not about or len(about) > 500:
+            raise APIError(HTTPStatus.BAD_REQUEST, "A descrição deve ter até 500 caracteres.")
+        with database() as db:
+            user = self.require_session_user(db)
+            result = db.execute(
+                """UPDATE listings SET category = ?, service = ?, location = ?, price = ?, about = ?
+                   WHERE id = ? AND user_id = ? AND active = 1""",
+                (category, service, location, price, about, listing_id, user["id"]),
+            )
+            if not result.rowcount:
+                raise APIError(HTTPStatus.NOT_FOUND, "Anúncio não encontrado.")
+            row = db.execute(
+                """SELECT listings.*, users.name, users.profile_bio, users.profile_location,
+                          users.profile_photo,
+                          EXISTS(SELECT 1 FROM contracts WHERE contracts.listing_id = listings.id
+                            AND contracts.state IN ('Aguardando confirmação', 'Confirmado')) AS is_booked
+                   FROM listings JOIN users ON users.id = listings.user_id WHERE listings.id = ?""",
+                (listing_id,),
+            ).fetchone()
+        return HTTPStatus.OK, {"listing": public_listing(row)}, []
+
+    def update_profile(self, payload):
+        name = str(payload.get("name", "")).strip()
+        profile_bio = str(payload.get("profileBio", "")).strip()
+        profile_location = str(payload.get("profileLocation", "")).strip()
+        profile_photo = str(payload.get("profilePhoto", ""))
+        if not name or len(name) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe um nome com até 120 caracteres.")
+        if len(profile_bio) > 500:
+            raise APIError(HTTPStatus.BAD_REQUEST, "A apresentação deve ter até 500 caracteres.")
+        if len(profile_location) > 120:
+            raise APIError(HTTPStatus.BAD_REQUEST, "A localização deve ter até 120 caracteres.")
+        if profile_photo:
+            match = re.fullmatch(r"data:image/jpeg;base64,([A-Za-z0-9+/]*={0,2})", profile_photo)
+            if not match:
+                raise APIError(HTTPStatus.BAD_REQUEST, "A foto deve estar no formato JPEG.")
+            try:
+                photo_bytes = base64.b64decode(match.group(1), validate=True)
+            except ValueError as error:
+                raise APIError(HTTPStatus.BAD_REQUEST, "A foto enviada é inválida.") from error
+            if len(photo_bytes) > MAX_PROFILE_PHOTO_BYTES or not photo_bytes.startswith(b"\xff\xd8") or not photo_bytes.endswith(b"\xff\xd9"):
+                raise APIError(HTTPStatus.BAD_REQUEST, "A foto deve ter até 300 KB.")
+        with database() as db:
+            user = self.require_session_user(db)
+            db.execute(
+                """UPDATE users SET name = ?, profile_bio = ?, profile_location = ?,
+                   profile_photo = ? WHERE id = ?""",
+                (name, profile_bio, profile_location, profile_photo, user["id"]),
+            )
+            updated = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        return HTTPStatus.OK, {"user": public_user(updated)}, []
 
     def handle_delete(self, path):
         match = re.fullmatch(r"/api/listings/([0-9a-f-]+)", path)
@@ -623,7 +853,8 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                 raise
             row = db.execute(
                 """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
-                          clients.name AS client_name, providers.name AS provider_name
+                       clients.name AS client_name, clients.profile_photo AS client_photo,
+                       providers.name AS provider_name, providers.profile_photo AS provider_photo
                    FROM contracts JOIN listings ON listings.id = contracts.listing_id
                    JOIN users AS clients ON clients.id = contracts.client_id
                    JOIN users AS providers ON providers.id = contracts.provider_id
@@ -655,7 +886,8 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             )
             row = db.execute(
                 """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
-                          clients.name AS client_name, providers.name AS provider_name
+                          clients.name AS client_name, clients.profile_photo AS client_photo,
+                          providers.name AS provider_name, providers.profile_photo AS provider_photo
                    FROM contracts LEFT JOIN listings ON listings.id = contracts.listing_id
                    JOIN users AS clients ON clients.id = contracts.client_id
                    JOIN users AS providers ON providers.id = contracts.provider_id

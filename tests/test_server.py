@@ -67,7 +67,7 @@ class AccountAPITests(unittest.TestCase):
         raw_body = response.read()
         try:
             result = json.loads(raw_body)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             result = raw_body.decode("utf-8", errors="replace")
         response_headers = response.getheaders()
         connection.close()
@@ -76,13 +76,13 @@ class AccountAPITests(unittest.TestCase):
                 self.cookie = value.split(";", 1)[0]
         return response.status, result
 
-    def register(self):
+    def register_account(self, email="pessoa@example.com", name="Pessoa Teste", role="both"):
         payload = {
-            "name": "Pessoa Teste",
-            "email": "pessoa@example.com",
+            "name": name,
+            "email": email,
             "cpf": "529.982.247-25",
             "phone": "(11) 98765-4321",
-            "role": "both",
+            "role": role,
             "password": "senha-segura-123",
         }
         status, response = self.request("POST", "/api/auth/register/start", payload)
@@ -92,6 +92,9 @@ class AccountAPITests(unittest.TestCase):
         status, response = self.request("POST", "/api/auth/register/verify", {"email": payload["email"], "code": code})
         self.assertEqual(status, 200, response)
         return payload
+
+    def register(self):
+        return self.register_account()
 
     def test_real_listings_and_hiring_requests_are_shared_between_accounts(self):
         customer = {
@@ -189,6 +192,115 @@ class AccountAPITests(unittest.TestCase):
         status, response = self.request("GET", "/api/contracts")
         self.assertEqual(status, 401)
         self.assertIn("Entre na sua conta", response["error"])
+
+    def test_profile_and_listing_can_be_updated_by_their_owner(self):
+        self.register()
+        listing = {
+            "category": "Reparos e Assistência",
+            "service": "Conserto de bicicletas",
+            "location": "São Paulo, SP",
+            "price": "A combinar",
+            "about": "Manutenção em domicílio.",
+        }
+        status, response = self.request("POST", "/api/listings", listing)
+        self.assertEqual(status, 201, response)
+        listing_id = response["listing"]["id"]
+
+        status, response = self.request("POST", "/api/auth/profile", {
+            "name": "Nome atualizado",
+            "profileBio": "Faço serviços com cuidado.",
+            "profileLocation": "Santo André, SP",
+            "profilePhoto": "data:image/jpeg;base64,/9h4/9k=",
+        })
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["user"]["name"], "Nome atualizado")
+        self.assertEqual(response["user"]["profileBio"], "Faço serviços com cuidado.")
+        self.assertEqual(response["user"]["profileLocation"], "Santo André, SP")
+        self.assertEqual(response["user"]["profilePhoto"], "data:image/jpeg;base64,/9h4/9k=")
+
+        status, response = self.request("POST", f"/api/listings/{listing_id}", {
+            **listing,
+            "service": "Revisão de bicicletas",
+            "price": "R$ 80",
+        })
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["listing"]["service"], "Revisão de bicicletas")
+        self.assertEqual(response["listing"]["name"], "Nome atualizado")
+        self.assertEqual(response["listing"]["profileBio"], "Faço serviços com cuidado.")
+        self.assertEqual(response["listing"]["profileLocation"], "Santo André, SP")
+        self.assertEqual(response["listing"]["profilePhoto"], "data:image/jpeg;base64,/9h4/9k=")
+
+        self.register_account("cliente@example.com", "Cliente")
+        status, response = self.request("POST", f"/api/listings/{listing_id}", listing)
+        self.assertEqual(status, 404, response)
+        status, response = self.request("POST", "/api/auth/profile", {"name": "x" * 121})
+        self.assertEqual(status, 400, response)
+        status, response = self.request("POST", "/api/auth/profile", {
+            "name": "Cliente",
+            "profilePhoto": "data:image/png;base64,Zm9v",
+        })
+        self.assertEqual(status, 400, response)
+
+    def test_contract_chat_is_shared_and_restricted_to_participants(self):
+        self.register_account("worker@example.com", "Profissional")
+        worker_cookie = self.cookie
+        listing_payload = {
+            "category": "Reparos e Assistência",
+            "service": "Conserto de bicicletas",
+            "location": "São Paulo, SP",
+            "price": "A combinar",
+            "about": "Manutenção em domicílio.",
+        }
+        _, listing_response = self.request("POST", "/api/listings", listing_payload)
+        listing_id = listing_response["listing"]["id"]
+
+        self.cookie = ""
+        self.register_account("customer@example.com", "Contratante", "client")
+        customer_cookie = self.cookie
+        status, response = self.request("POST", "/api/contracts", {
+            "listingId": listing_id,
+            "date": "Segunda às 10:00",
+        })
+        self.assertEqual(status, 201, response)
+        contract_id = response["contract"]["id"]
+
+        status, response = self.request("GET", "/api/messages")
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["conversations"][0]["contractId"], contract_id)
+        self.assertEqual(response["conversations"][0]["unreadCount"], 0)
+        status, response = self.request("POST", "/api/messages", {
+            "contractId": contract_id,
+            "body": "Olá, podemos combinar os detalhes?",
+        })
+        self.assertEqual(status, 201, response)
+        self.assertTrue(response["message"]["mine"])
+
+        self.cookie = worker_cookie
+        status, response = self.request("GET", f"/api/messages?contractId={contract_id}")
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["messages"][0]["body"], "Olá, podemos combinar os detalhes?")
+        self.assertFalse(response["messages"][0]["mine"])
+        status, response = self.request("POST", "/api/messages", {
+            "contractId": contract_id,
+            "body": "Claro, pode me contar mais?",
+        })
+        self.assertEqual(status, 201, response)
+
+        self.cookie = ""
+        self.register_account("intruso@example.com", "Terceiro", "client")
+        status, response = self.request("GET", f"/api/messages?contractId={contract_id}")
+        self.assertEqual(status, 404, response)
+        status, response = self.request("POST", "/api/messages", {
+            "contractId": contract_id,
+            "body": "Mensagem não autorizada",
+        })
+        self.assertEqual(status, 404, response)
+
+        self.cookie = customer_cookie
+        status, response = self.request("POST", f"/api/contracts/{contract_id}/status", {"status": "cancel"})
+        self.assertEqual(status, 200, response)
+        status, response = self.request("GET", f"/api/messages?contractId={contract_id}")
+        self.assertEqual(status, 404, response)
 
     def test_registration_requires_email_code_and_creates_authenticated_user(self):
         payload = self.register()
@@ -362,6 +474,8 @@ class AccountAPITests(unittest.TestCase):
 
     def test_server_does_not_serve_database_or_backend_source(self):
         status, _ = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        status, _ = self.request("GET", "/logo_autonome.png")
         self.assertEqual(status, 200)
         status, _ = self.request("GET", "/server.py")
         self.assertEqual(status, 404)
