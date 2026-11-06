@@ -13,19 +13,16 @@ O AutonoMe abre em modo de app e guarda os arquivos da interface para que ela po
 
 ## Executar localmente
 
-O backend do AutonoMe serve a interface e a API no mesmo endereço. Configure as variáveis SMTP do seu provedor de e-mail e uma chave secreta em seu ambiente; não publique nem compartilhe esses valores:
+O backend do AutonoMe serve a interface e a API no mesmo endereço. Para enviar códigos sem SMTP, configure uma chave de API do Brevo, um remetente verificado e uma chave secreta em seu ambiente; não publique nem compartilhe esses valores:
 
 ```powershell
 $env:APP_SECRET = (py -c "import secrets; print(secrets.token_urlsafe(48))")
-$env:SMTP_HOST = "<servidor-smtp>"
-$env:SMTP_PORT = "587"
-$env:SMTP_USERNAME = "<usuario-smtp>"
-$env:SMTP_PASSWORD = "<senha-de-aplicativo>"
-$env:SMTP_FROM = "<email-remetente-verificado>"
+$env:BREVO_API_KEY = "<chave-api-brevo>"
+$env:EMAIL_FROM = "<email-remetente-verificado-no-brevo>"
 py server.py
 ```
 
-Abra `http://127.0.0.1:8000`. A primeira inicialização cria `data/autonome.sqlite3` com tabelas para contas ativas, códigos temporários, sessões e usuários desativados. A configuração de envio de e-mail é obrigatória para cadastro ou desativação; se faltar, o servidor informa o erro e não simula o envio do código. Em produção, use HTTPS, defina `APP_ENV=production` e `COOKIE_SECURE=true`, além de uma chave `APP_SECRET` persistente e protegida. O código tem seis letras/números, vence em 10 minutos, permite até cinco tentativas e pode ser reenviado após 1 minuto. O CPF é validado no servidor, mas não é armazenado nem consultado na Receita Federal.
+Abra `http://127.0.0.1:8000`. A primeira inicialização cria `data/autonome.sqlite3` com tabelas para contas ativas, códigos temporários, sessões e usuários desativados. A configuração de envio de e-mail é obrigatória para cadastro ou desativação; se faltar, o servidor informa o erro e não simula o envio do código. Também é possível usar SMTP definindo `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `SMTP_FROM`. Em produção, use HTTPS, defina `APP_ENV=production` e `COOKIE_SECURE=true`, além de uma chave `APP_SECRET` persistente e protegida. O código tem seis letras/números, vence em 10 minutos, permite até cinco tentativas e pode ser reenviado após 1 minuto. O CPF é validado no servidor, mas não é armazenado nem consultado na Receita Federal.
 
 Para produção, configure também `AUTONOME_HOST=0.0.0.0` atrás de um proxy HTTPS, defina `AUTONOME_DB_PATH` para um volume persistente e mantenha `APP_SECRET` estável entre reinicializações. Para testar os endpoints sem enviar e-mails, execute `py -m unittest discover -s tests -v`.
 
@@ -33,7 +30,7 @@ Sem backend, abrir `index.html` ou publicar somente os arquivos estáticos não 
 
 ## APK Android conectado ao servidor
 
-O APK de desenvolvimento sem configuração abre uma cópia local da interface e não consegue acessar a API. Para autenticação funcionar, primeiro publique **o backend e a interface juntos no mesmo endereço HTTPS**, configure as variáveis de produção e SMTP acima e confirme que o endereço abre o AutonoMe no celular. Em seguida, gere o APK apontando para esse endereço:
+O APK de desenvolvimento sem configuração abre uma cópia local da interface e não consegue acessar a API. Para autenticação funcionar, primeiro publique **o backend e a interface juntos no mesmo endereço HTTPS**, configure as variáveis de produção e e-mail acima e confirme que o endereço abre o AutonoMe no celular. Em seguida, gere o APK apontando para esse endereço:
 
 ```powershell
 gradle -p android assembleDebug "-PautonomeAppUrl=https://SEU-DOMINIO/"
@@ -43,12 +40,12 @@ O projeto Android requer JDK 17, Android SDK 34 e Gradle 8.7. O APK conectado se
 
 ## Publicar no Render
 
-Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **testes iniciais**, sem cobrança automática de compute. Neste plano o servidor pode dormir após 15 minutos sem uso, o banco SQLite fica em armazenamento temporário e conexões SMTP de saída são bloqueadas. Assim, a interface e a API podem abrir, mas o cadastro e a desativação por e-mail não funcionam nesse plano. Não use esta configuração para dados importantes. Para preservar contas será necessário migrar para um plano que aceite disco persistente, montar o disco em `/data` e definir `AUTONOME_DB_PATH=/data/autonome.sqlite3`; serviços pagos podem gerar cobranças. Para publicar:
+Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **testes iniciais**, sem cobrança automática de compute. Neste plano o servidor pode dormir após 15 minutos sem uso, o banco SQLite fica em armazenamento temporário e conexões SMTP de saída são bloqueadas. O backend agora envia e-mails pela API HTTPS do Brevo, que não depende de SMTP. Não use esta configuração para dados importantes. Para preservar contas será necessário migrar para um plano que aceite disco persistente, montar o disco em `/data` e definir `AUTONOME_DB_PATH=/data/autonome.sqlite3`; serviços pagos podem gerar cobranças. Para publicar:
 
 1. Envie este repositório para o GitHub e confirme que a branch a publicar contém `Dockerfile` e `render.yaml`.
 2. Crie ou entre na sua conta em [dashboard.render.com](https://dashboard.render.com), escolha **New → Blueprint**, conecte o GitHub e selecione o repositório/branch.
 3. Revise e confirme o Blueprint `render.yaml`. Ele configura o serviço gratuito de teste e gera `APP_SECRET` automaticamente.
-4. As variáveis SMTP aparecem no Blueprint, mas só funcionam em um serviço/hospedagem que permita conexões SMTP de saída. Para uma hospedagem compatível, preencha no painel do serviço:
+4. No painel do serviço, abra **Environment → Edit** e configure o remetente do Brevo. O Blueprint deixa o segredo para preenchimento privado e oferece estas variáveis:
 
    | Variável | Valor |
    | --- | --- |
@@ -56,22 +53,23 @@ Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **
    | `APP_SECRET` | chave aleatória privada com pelo menos 32 caracteres |
    | `COOKIE_SECURE` | `true` |
    | `AUTONOME_DB_PATH` | `/data/autonome.sqlite3` |
-   | `SMTP_HOST` | servidor SMTP do provedor de e-mail |
-   | `SMTP_PORT` | `587` |
-   | `SMTP_USERNAME` | usuário SMTP |
-   | `SMTP_PASSWORD` | senha de aplicativo SMTP |
-   | `SMTP_FROM` | endereço remetente verificado no provedor |
+   | `BREVO_API_KEY` | chave API criada no painel do Brevo (secreta) |
+   | `EMAIL_FROM` | endereço verificado na área de remetentes do Brevo |
+   | `EMAIL_FROM_NAME` | nome apresentado ao destinatário (opcional; padrão `AutonoMe`) |
 
-5. Gere um domínio público HTTPS em **Settings → Networking → Generate Domain**. Espere o deploy ficar saudável, abra esse endereço no celular e teste o envio de código por e-mail. No plano Free, o endpoint de cadastro retornará uma mensagem explicando que o serviço SMTP está indisponível.
+   No [Brevo](https://www.brevo.com/), crie a conta e uma [API key](https://developers.brevo.com/docs/api-key-authentication). Adicione um remetente em [Settings → Senders](https://app.brevo.com/senders). Para testar, o Brevo pode verificar um endereço individual enviando um código para essa caixa de entrada. Autenticar um domínio próprio com os registros DNS do Brevo é recomendado para melhor entregabilidade; remetentes de domínios gratuitos como Gmail podem receber avisos e ter menor entregabilidade.
+
+   As variáveis SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `SMTP_FROM`) são opcionais e servem como alternativa em hospedagens que permitem conexões SMTP de saída. O plano Free do Render bloqueia SMTP.
+
+5. Gere um domínio público HTTPS em **Settings → Networking → Generate Domain**. Espere o deploy ficar saudável, abra esse endereço no celular e teste o envio de código por e-mail.
 6. Gere o APK com o endereço HTTPS do domínio Render usando o comando da seção anterior. O app e o backend ficam no mesmo domínio, necessário para que o cookie de sessão funcione corretamente.
 
-O serviço gratuito pode ficar temporariamente indisponível ao acordar e não preserva os dados locais entre reinicializações. Este backend atualmente envia e-mails somente por SMTP; um provedor que ofereça apenas API HTTPS ainda não é compatível. Nunca envie `APP_SECRET`, senha SMTP ou códigos de verificação pelo chat; `APP_SECRET` é gerado pelo Render e as credenciais SMTP devem ser preenchidas apenas no painel **Environment** do serviço. O APK atual não ganha conectividade retroativamente: é necessário gerar e instalar outro APK depois de ter o domínio publicado.
+O serviço gratuito pode ficar temporariamente indisponível ao acordar e não preserva os dados locais entre reinicializações. Nunca envie `APP_SECRET`, chave do Brevo, senha SMTP ou códigos de verificação pelo chat; `APP_SECRET` é gerado pelo Render e os segredos devem ser preenchidos apenas no painel **Environment** do serviço. O APK atual não ganha conectividade retroativamente: é necessário gerar e instalar outro APK depois de ter o domínio publicado.
 
 ### Configurar envio com Gmail em hospedagem compatível com SMTP
 
-O envio por `smtp.gmail.com:587` **não funciona no plano Free do Render**, mesmo que as variáveis estejam preenchidas. Em um plano/hospedagem que permita SMTP, abra o serviço no Render e vá a **Environment → Edit**. Configure `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USERNAME` com seu endereço Gmail, `SMTP_FROM` com o mesmo endereço e `SMTP_PASSWORD` com uma **senha de app Google** (não a senha normal da conta). A senha de app é criada em [Segurança da Conta Google → Senhas de app](https://myaccount.google.com/apppasswords); a verificação em duas etapas precisa estar ativa. Salve e aguarde o deploy ficar **Live**. Não compartilhe a senha de app no chat nem no GitHub. Se usar outro provedor, obtenha dele o host, a porta, o usuário, a senha SMTP e o remetente autorizado.
+O envio por `smtp.gmail.com:587` **não funciona no plano Free do Render**, mesmo que as variáveis estejam preenchidas. A integração Brevo por API HTTPS é a opção para este plano. Em outra hospedagem que permita SMTP, configure `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USERNAME` com seu endereço Gmail, `SMTP_FROM` com o mesmo endereço e `SMTP_PASSWORD` com uma **senha de app Google** (não a senha normal da conta). A senha de app é criada em [Segurança da Conta Google → Senhas de app](https://myaccount.google.com/apppasswords); a verificação em duas etapas precisa estar ativa. Nunca compartilhe a senha de app no chat nem no GitHub.
 
-Se quiser continuar usando o plano Free do Render, será necessário integrar um provedor de envio por API HTTPS; isso ainda exige escolher um provedor e configurar um remetente autorizado, e não é suportado pelo backend atual. Não adianta adicionar uma chave de API de e-mail ao Render até essa integração existir.
 
 ## Fluxos incluídos
 

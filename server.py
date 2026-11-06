@@ -10,6 +10,7 @@ import string
 import sys
 import time
 import traceback
+import urllib.request
 import uuid
 from contextlib import contextmanager
 from email.message import EmailMessage
@@ -38,10 +39,9 @@ OTP_LIFETIME_SECONDS = 10 * 60
 SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 OTP_MAX_ATTEMPTS = 5
 SMTP_NOT_CONFIGURED_MESSAGE = (
-    "O envio de e-mail não está configurado. Este servidor usa SMTP, bloqueado no plano "
-    "Free do Render. Para habilitar o cadastro, use uma hospedagem/plano que permita SMTP "
-    "e configure SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM em Environment. "
-    "O envio por API HTTPS ainda não está integrado."
+    "O envio de e-mail não está configurado. No Render Free, configure BREVO_API_KEY e "
+    "EMAIL_FROM em Environment usando um remetente verificado no Brevo. Em outra hospedagem, "
+    "também é possível usar SMTP com SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM."
 )
 OTP_ALPHABET = string.ascii_uppercase + string.digits
 VALID_DDDS = {
@@ -163,22 +163,49 @@ def verification_hash(code):
 
 
 def send_verification_email(address, code, purpose):
-    host = os.environ.get("SMTP_HOST")
-    sender = os.environ.get("SMTP_FROM")
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured. Set SMTP_HOST and SMTP_FROM.")
-
     is_registration = purpose == "register"
-    message = EmailMessage()
-    message["Subject"] = "Confirme seu cadastro no AutonoMe" if is_registration else "Confirme a desativação da sua conta AutonoMe"
-    message["From"] = sender
-    message["To"] = address
     action = "concluir seu cadastro" if is_registration else "desativar sua conta"
-    message.set_content(
+    subject = "Confirme seu cadastro no AutonoMe" if is_registration else "Confirme a desativação da sua conta AutonoMe"
+    content = (
         f"Use este código para {action} no AutonoMe:\n\n"
         f"{code}\n\n"
         f"O código expira em 10 minutos. Se você não solicitou esta ação, ignore esta mensagem."
     )
+
+    brevo_api_key = os.environ.get("BREVO_API_KEY")
+    if brevo_api_key:
+        sender = os.environ.get("EMAIL_FROM")
+        if not sender:
+            raise RuntimeError("Email delivery is not configured. Set EMAIL_FROM for BREVO_API_KEY.")
+        payload = {
+            "sender": {"name": os.environ.get("EMAIL_FROM_NAME", "AutonoMe"), "email": sender},
+            "to": [{"email": address}],
+            "subject": subject,
+            "textContent": content,
+        }
+        request = urllib.request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "accept": "application/json",
+                "api-key": brevo_api_key,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=15):
+            return
+
+    host = os.environ.get("SMTP_HOST")
+    sender = os.environ.get("SMTP_FROM")
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured. Set BREVO_API_KEY and EMAIL_FROM, or SMTP_HOST and SMTP_FROM.")
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = sender
+    message["To"] = address
+    message.set_content(content)
 
     port = int(os.environ.get("SMTP_PORT", "587"))
     username = os.environ.get("SMTP_USERNAME")

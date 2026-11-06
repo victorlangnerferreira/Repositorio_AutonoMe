@@ -1,12 +1,34 @@
 import http.client
 import json
+import os
 import re
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import server
+
+
+class EmailDeliveryTests(unittest.TestCase):
+    @patch.dict(os.environ, {
+        "BREVO_API_KEY": "test-api-key",
+        "EMAIL_FROM": "verified@example.com",
+        "EMAIL_FROM_NAME": "AutonoMe Test",
+    }, clear=True)
+    @patch("server.urllib.request.urlopen")
+    def test_brevo_api_sends_verification_message_over_https(self, urlopen):
+        server.send_verification_email("customer@example.com", "A1B2C3", "register")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.brevo.com/v3/smtp/email")
+        self.assertEqual(request.get_header("Api-key"), "test-api-key")
+        payload = json.loads(request.data)
+        self.assertEqual(payload["sender"], {"name": "AutonoMe Test", "email": "verified@example.com"})
+        self.assertEqual(payload["to"], [{"email": "customer@example.com"}])
+        self.assertIn("A1B2C3", payload["textContent"])
+        urlopen.assert_called_once_with(request, timeout=15)
 
 
 class AccountAPITests(unittest.TestCase):
@@ -105,8 +127,9 @@ class AccountAPITests(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertIn("SMTP_HOST", response["error"])
         self.assertIn("SMTP_PASSWORD", response["error"])
-        self.assertIn("Free do Render", response["error"])
-        self.assertIn("API HTTPS ainda não está integrado", response["error"])
+        self.assertIn("Render Free", response["error"])
+        self.assertIn("BREVO_API_KEY", response["error"])
+        self.assertIn("EMAIL_FROM", response["error"])
         with server.database() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM email_verifications WHERE email = 'other@example.com'").fetchone()[0], 0)
 

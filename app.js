@@ -671,7 +671,8 @@ function showToast(message) {
   toast.textContent = message;
   document.body.append(toast);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.remove(), 3200);
+  const duration = Math.max(3200, Math.min(9000, message.length * 35));
+  toastTimer = setTimeout(() => toast.remove(), duration);
 }
 
 function openProvider(name) {
