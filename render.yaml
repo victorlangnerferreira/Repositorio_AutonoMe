@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: autonome
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: APP_SECRET
+        generateValue: true
+      - key: APP_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: AutonoMe

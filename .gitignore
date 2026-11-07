@@ -1,0 +1,7 @@
+.env
+__pycache__/
+data/
+android/.gradle/
+android/build/
+android/app/build/
+*.apk

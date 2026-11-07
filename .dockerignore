@@ -1,0 +1,11 @@
+.git
+.gitignore
+.dockerignore
+.env
+.venv
+__pycache__
+*.py[cod]
+data
+tests
+android
+README.md

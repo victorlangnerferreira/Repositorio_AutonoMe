@@ -1,0 +1,78 @@
+import java.net.URI
+import java.net.URISyntaxException
+import groovy.json.JsonOutput
+
+plugins {
+    id "com.android.application"
+}
+
+def autonomeAppUrl = (project.findProperty("autonomeAppUrl") ?: "").toString().trim()
+if (!autonomeAppUrl.isEmpty()) {
+    try {
+        def appUri = new URI(autonomeAppUrl)
+        if (appUri.scheme != "https" || !appUri.host) {
+            throw new GradleException("autonomeAppUrl must be an HTTPS URL.")
+        }
+    } catch (URISyntaxException error) {
+        throw new GradleException("autonomeAppUrl must be a valid HTTPS URL.", error)
+    }
+}
+
+android {
+    namespace "br.com.autonome.app"
+    compileSdk 34
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "br.com.autonome.app"
+        minSdk 23
+        targetSdk 34
+        versionCode 4
+        versionName "1.5.0"
+        buildConfigField "String", "AUTONOME_APP_URL", JsonOutput.toJson(autonomeAppUrl)
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ["$buildDir/generated/autonomeAssets"]
+            res.srcDirs = ["src/main/res", "$buildDir/generated/autonomeRes"]
+        }
+    }
+}
+
+def webAssets = [
+    "index.html",
+    "style.css",
+    "app.js",
+    "manifest.webmanifest",
+    "icon.svg",
+    "logo_autonome.png",
+    "icon-192.png",
+    "icon-512.png",
+    "apple-touch-icon.png",
+]
+
+tasks.register("copyWebAssets", Copy) {
+    from(rootProject.projectDir.parentFile)
+    include(webAssets)
+    into("$buildDir/generated/autonomeAssets")
+}
+
+tasks.register("copyLauncherIcon", Copy) {
+    from(rootProject.projectDir.parentFile.toPath().resolve("icon-192.png").toFile()) {
+        into("mipmap-xxxhdpi")
+        rename { "ic_launcher.png" }
+    }
+    from(rootProject.projectDir.parentFile.toPath().resolve("icon-192.png").toFile()) {
+        into("mipmap-xxxhdpi")
+        rename { "ic_launcher_round.png" }
+    }
+    into("$buildDir/generated/autonomeRes")
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("copyWebAssets", "copyLauncherIcon")
+}
