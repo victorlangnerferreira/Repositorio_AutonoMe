@@ -5,6 +5,7 @@ import re
 import tempfile
 import threading
 import unittest
+from datetime import date, timedelta
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -96,6 +97,15 @@ class AccountAPITests(unittest.TestCase):
     def register(self):
         return self.register_account()
 
+    def schedule_next_day(self, service_time="10:00"):
+        service_date = date.today() + timedelta(days=1)
+        weekday = (service_date.weekday() + 1) % 7
+        status, response = self.request("POST", "/api/availability", {
+            "availability": [{"weekday": weekday, "time": service_time}],
+        })
+        self.assertEqual(status, 200, response)
+        return service_date
+
     def test_real_listings_and_hiring_requests_are_shared_between_accounts(self):
         customer = {
             "name": "Cliente Teste",
@@ -131,6 +141,7 @@ class AccountAPITests(unittest.TestCase):
         self.assertEqual(response["user"]["role"], "both")
         self.assertNotIn("email", response["listing"])
         self.assertNotIn("phone", response["listing"])
+        service_date = self.schedule_next_day()
 
         self.cookie = customer_cookie
         status, response = self.request("GET", "/api/listings")
@@ -144,14 +155,25 @@ class AccountAPITests(unittest.TestCase):
         status, response = self.request(
             "POST",
             "/api/contracts",
-            {"listingId": listing_id, "date": "Seg, 20/05 às 10:00", "details": "Preciso ajustar os freios."},
+            {
+                "listingId": listing_id,
+                "serviceDate": service_date.isoformat(),
+                "time": "10:00",
+                "address": "Rua das Flores, 10",
+                "details": "Preciso ajustar os freios.",
+            },
         )
         self.assertEqual(status, 201, response)
         contract_id = response["contract"]["id"]
         self.assertEqual(response["contract"]["tab"], "requested")
         self.assertEqual(response["contract"]["name"], worker["name"])
+        self.assertEqual(response["contract"]["serviceAddress"], "Rua das Flores, 10")
         self.assertTrue(self.request("GET", "/api/listings")[1]["listings"][0]["isBooked"])
-        self.assertEqual(self.request("POST", "/api/contracts", {"listingId": listing_id, "date": "Ter, 21/05 às 10:00"})[0], 409)
+        self.assertEqual(self.request("POST", "/api/contracts", {
+            "listingId": listing_id,
+            "serviceDate": service_date.isoformat(),
+            "time": "10:00",
+        })[0], 409)
         self.assertEqual(
             self.request("POST", f"/api/contracts/{contract_id}/status", {"status": "confirm"})[0],
             403,
@@ -253,13 +275,15 @@ class AccountAPITests(unittest.TestCase):
         }
         _, listing_response = self.request("POST", "/api/listings", listing_payload)
         listing_id = listing_response["listing"]["id"]
+        service_date = self.schedule_next_day()
 
         self.cookie = ""
         self.register_account("customer@example.com", "Contratante", "client")
         customer_cookie = self.cookie
         status, response = self.request("POST", "/api/contracts", {
             "listingId": listing_id,
-            "date": "Segunda às 10:00",
+            "serviceDate": service_date.isoformat(),
+            "time": "10:00",
         })
         self.assertEqual(status, 201, response)
         contract_id = response["contract"]["id"]
@@ -481,6 +505,161 @@ class AccountAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         status, _ = self.request("GET", "/data/autonome.sqlite3")
         self.assertEqual(status, 404)
+
+    def test_favorites_are_saved_on_the_server_and_private_to_each_account(self):
+        self.register_account("profissional@example.com", "Profissional", "both")
+        worker_cookie = self.cookie
+        listing = {
+            "category": "Reparos e Assistência",
+            "service": "Conserto de bicicletas",
+            "location": "São Paulo, SP",
+            "price": "A combinar",
+            "about": "Manutenção em domicílio.",
+        }
+        _, listing_response = self.request("POST", "/api/listings", listing)
+        listing_id = listing_response["listing"]["id"]
+
+        self.cookie = ""
+        self.register_account("cliente@example.com", "Cliente", "client")
+        customer_cookie = self.cookie
+        status, response = self.request("POST", "/api/favorites", {"listingId": listing_id})
+        self.assertEqual(status, 201, response)
+        self.assertEqual(self.request("GET", "/api/favorites")[1]["favorites"][0]["id"], listing_id)
+        self.assertEqual(self.request("POST", "/api/favorites", {"listingId": listing_id})[0], 201)
+
+        self.cookie = worker_cookie
+        self.assertEqual(self.request("POST", "/api/favorites", {"listingId": listing_id})[0], 400)
+        self.cookie = ""
+        self.register_account("outra@example.com", "Outra", "client")
+        self.assertEqual(self.request("GET", "/api/favorites")[1]["favorites"], [])
+
+        self.cookie = customer_cookie
+        self.assertEqual(self.request("DELETE", f"/api/favorites/{listing_id}")[0], 200)
+        self.assertEqual(self.request("GET", "/api/favorites")[1]["favorites"], [])
+
+    def test_availability_is_required_and_only_the_provider_can_change_it(self):
+        self.register_account("profissional@example.com", "Profissional", "both")
+        worker_cookie = self.cookie
+        listing = {
+            "category": "Reparos e Assistência",
+            "service": "Conserto de bicicletas",
+            "location": "São Paulo, SP",
+            "price": "A combinar",
+            "about": "Manutenção em domicílio.",
+        }
+        _, listing_response = self.request("POST", "/api/listings", listing)
+        listing_id = listing_response["listing"]["id"]
+        service_date = self.schedule_next_day("10:30")
+        self.assertEqual(self.request("GET", "/api/availability")[1]["availability"][0]["time"], "10:30")
+
+        self.cookie = ""
+        self.register_account("cliente@example.com", "Cliente", "client")
+        customer_cookie = self.cookie
+        query = f"/api/availability?listingId={listing_id}&date={service_date.isoformat()}"
+        self.assertEqual(self.request("GET", query)[1]["times"], ["10:30"])
+        status, response = self.request("POST", "/api/contracts", {
+            "listingId": listing_id,
+            "serviceDate": service_date.isoformat(),
+            "time": "11:00",
+        })
+        self.assertEqual(status, 409)
+        self.assertIn("não disponibilizou", response["error"])
+        self.assertEqual(self.request("POST", "/api/availability", {"availability": []})[0], 403)
+
+        self.cookie = worker_cookie
+        status, response = self.request("POST", "/api/availability", {
+            "availability": [{"weekday": 7, "time": "10:30"}],
+        })
+        self.assertEqual(status, 400)
+        self.cookie = customer_cookie
+        self.assertEqual(self.request("GET", "/api/availability")[1]["availability"], [])
+
+    def test_contract_notes_are_private_to_the_author_and_only_available_to_participants(self):
+        self.register_account("profissional@example.com", "Profissional", "both")
+        worker_cookie = self.cookie
+        listing = {
+            "category": "Reparos e Assistência",
+            "service": "Conserto de bicicletas",
+            "location": "São Paulo, SP",
+            "price": "A combinar",
+            "about": "Manutenção em domicílio.",
+        }
+        _, listing_response = self.request("POST", "/api/listings", listing)
+        listing_id = listing_response["listing"]["id"]
+        service_date = self.schedule_next_day()
+
+        self.cookie = ""
+        self.register_account("cliente@example.com", "Cliente", "client")
+        customer_cookie = self.cookie
+        status, response = self.request("POST", "/api/contracts", {
+            "listingId": listing_id,
+            "serviceDate": service_date.isoformat(),
+            "time": "10:00",
+        })
+        self.assertEqual(status, 201, response)
+        contract_id = response["contract"]["id"]
+
+        status, response = self.request("POST", f"/api/contracts/{contract_id}/notes", {"body": "Levar a bicicleta azul."})
+        self.assertEqual(status, 201, response)
+        self.assertEqual(self.request("GET", f"/api/contracts/{contract_id}/notes")[1]["notes"][0]["body"], "Levar a bicicleta azul.")
+        self.cookie = worker_cookie
+        self.assertEqual(self.request("GET", f"/api/contracts/{contract_id}/notes")[1]["notes"], [])
+        status, _ = self.request("POST", f"/api/contracts/{contract_id}/notes", {"body": "Confirmar ferramentas."})
+        self.assertEqual(status, 201)
+        self.assertEqual(self.request("GET", f"/api/contracts/{contract_id}/notes")[1]["notes"][0]["body"], "Confirmar ferramentas.")
+
+        self.cookie = customer_cookie
+        self.register_account("terceiro@example.com", "Terceiro", "client")
+        self.assertEqual(self.request("GET", f"/api/contracts/{contract_id}/notes")[0], 404)
+        self.assertEqual(self.request("POST", f"/api/contracts/{contract_id}/notes", {"body": "Não autorizado"})[0], 404)
+
+    def test_notifications_follow_contract_events_and_are_private_to_the_recipient(self):
+        self.register_account("profissional@example.com", "Profissional", "both")
+        worker_cookie = self.cookie
+        listing = {
+            "category": "Reparos e Assistência",
+            "service": "Conserto de bicicletas",
+            "location": "São Paulo, SP",
+            "price": "A combinar",
+            "about": "Manutenção em domicílio.",
+        }
+        _, listing_response = self.request("POST", "/api/listings", listing)
+        listing_id = listing_response["listing"]["id"]
+        service_date = self.schedule_next_day()
+
+        self.cookie = ""
+        self.register_account("cliente@example.com", "Cliente", "client")
+        customer_cookie = self.cookie
+        status, response = self.request("POST", "/api/contracts", {
+            "listingId": listing_id,
+            "serviceDate": service_date.isoformat(),
+            "time": "10:00",
+        })
+        self.assertEqual(status, 201, response)
+        contract_id = response["contract"]["id"]
+
+        self.cookie = worker_cookie
+        notifications = self.request("GET", "/api/notifications")[1]["notifications"]
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]["title"], "Novo pedido de contratação")
+        self.assertFalse(notifications[0]["read"])
+        notification_id = notifications[0]["id"]
+        self.assertEqual(self.request("POST", f"/api/notifications/{notification_id}/read", {})[0], 200)
+        self.assertTrue(self.request("GET", "/api/notifications")[1]["notifications"][0]["read"])
+        self.assertEqual(self.request("POST", f"/api/notifications/{notification_id}/read", {})[0], 200)
+
+        self.request("POST", f"/api/contracts/{contract_id}/status", {"status": "confirm"})
+        self.cookie = customer_cookie
+        notifications = self.request("GET", "/api/notifications")[1]["notifications"]
+        self.assertEqual(notifications[0]["title"], "Pedido confirmado")
+        self.assertEqual(notifications[0]["contractId"], contract_id)
+
+        self.cookie = ""
+        self.register_account("terceiro@example.com", "Terceiro", "client")
+        self.assertEqual(self.request("GET", "/api/notifications")[1]["notifications"], [])
+        self.cookie = customer_cookie
+        self.assertEqual(self.request("DELETE", "/api/notifications")[0], 200)
+        self.assertEqual(self.request("GET", "/api/notifications")[1]["notifications"], [])
 
 
 if __name__ == "__main__":

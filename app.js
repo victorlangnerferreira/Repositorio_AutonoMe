@@ -29,6 +29,7 @@ const state = {
   category: "",
   service: "",
   provider: null,
+  bookingAddress: "",
   publicListings: [],
   contracts: [],
   contractTab: "requested",
@@ -40,6 +41,11 @@ const state = {
   favorites: [],
   ownListings: [],
   editingListingId: "",
+  providerAvailability: [],
+  availableTimes: [],
+  availabilityConfigured: false,
+  availabilityLoading: false,
+  contractNotes: [],
   notifications: [],
   selectedDay: 0,
   selectedTime: "",
@@ -58,12 +64,11 @@ function restoreAppState() {
   try {
     const saved = JSON.parse(localStorage.getItem(`${STORAGE_KEY_PREFIX}${state.userId}`) || "null");
     if (!saved || typeof saved !== "object") return;
-    for (const key of ["ownListings", "favorites", "contracts", "messages", "notifications", "settings"]) {
+    for (const key of ["ownListings", "favorites", "contracts", "messages", "settings"]) {
       if (saved[key] !== undefined) state[key] = saved[key];
     }
     state.contracts = [];
     state.messages = [];
-    state.notifications = state.notifications.filter((notification) => !["request-demo", "welcome"].includes(notification.id));
     state.favorites = state.favorites.filter((provider) => !String(provider.id || "").startsWith("demo-"));
     state.settings = { ...state.settings, ...(saved.settings || {}) };
     saveAppState();
@@ -75,7 +80,7 @@ function restoreAppState() {
 function saveAppState() {
   if (!state.userId) return;
   try {
-    const saved = Object.fromEntries(["ownListings", "favorites", "contracts", "messages", "notifications", "settings"].map((key) => [key, state[key]]));
+    const saved = Object.fromEntries(["ownListings", "favorites", "contracts", "messages", "settings"].map((key) => [key, state[key]]));
     localStorage.setItem(`${STORAGE_KEY_PREFIX}${state.userId}`, JSON.stringify(saved));
   } catch (error) {
     console.error("Não foi possível salvar os dados locais do AutonoMe.", error);
@@ -86,25 +91,9 @@ restoreAppState();
 
 const app = document.querySelector("#app");
 const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-const times = Array.from({ length: 24 }, (_, index) => `${String(index + 1).padStart(2, "0")}:00`);
 let toastTimer;
 let chatPollTimer;
 let chatPollBusy = false;
-let installPromptEvent = null;
-
-function isInstalled() {
-  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-}
-
-function isAppleMobile() {
-  return /iPhone|iPad|iPod/.test(navigator.userAgent)
-    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-}
-
-function installButton() {
-  if (isInstalled()) return "";
-  return `<button class="button secondary small install-button" type="button" data-action="install-app"><span aria-hidden="true">↓</span> Instalar app</button>`;
-}
 
 function esc(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -293,6 +282,9 @@ function setAuthenticatedUser(user) {
     state.activeConversationId = "";
     state.chatMessages = [];
     state.notifications = [];
+    state.providerAvailability = [];
+    state.availableTimes = [];
+    state.contractNotes = [];
     state.settings = { "Notificações": true, "Modo Escuro": false, "Permitir localização": false, "Permitir microfone": false, "Permitir câmera": false };
     state.userId = user.id;
     restoreAppState();
@@ -312,6 +304,7 @@ function setAuthenticatedUser(user) {
 
 async function refreshRemoteData(migrateLocalListings = false) {
   const legacyListings = migrateLocalListings ? [...state.ownListings] : [];
+  const legacyFavorites = [...state.favorites];
   let result = await apiRequest("/api/listings", { method: "GET", headers: {} });
   let ownListings = result.listings.filter((listing) => listing.ownerId === state.userId);
   if (legacyListings.length && !ownListings.length) {
@@ -332,16 +325,41 @@ async function refreshRemoteData(migrateLocalListings = false) {
     result = await apiRequest("/api/listings", { method: "GET", headers: {} });
     ownListings = result.listings.filter((listing) => listing.ownerId === state.userId);
   }
-  const contractsResult = await apiRequest("/api/contracts", { method: "GET", headers: {} });
+  const [contractsResult, initialFavoritesResult, availabilityResult] = await Promise.all([
+    apiRequest("/api/contracts", { method: "GET", headers: {} }),
+    apiRequest("/api/favorites", { method: "GET", headers: {} }),
+    apiRequest("/api/availability", { method: "GET", headers: {} }),
+  ]);
+  let favoritesResult = initialFavoritesResult;
+  const remoteFavoriteIds = new Set(favoritesResult.favorites.map((favorite) => favorite.id));
+  const favoritesToMigrate = legacyFavorites.filter((favorite) => (
+    favorite.id
+    && favorite.ownerId !== state.userId
+    && !remoteFavoriteIds.has(favorite.id)
+    && result.listings.some((listing) => listing.id === favorite.id)
+  ));
+  for (const favorite of favoritesToMigrate) {
+    await apiRequest("/api/favorites", {
+      method: "POST",
+      body: JSON.stringify({ listingId: favorite.id }),
+    });
+  }
+  if (favoritesToMigrate.length) favoritesResult = await apiRequest("/api/favorites", { method: "GET", headers: {} });
   state.publicListings = result.listings;
   state.ownListings = ownListings;
   state.contracts = contractsResult.contracts;
-  state.favorites = state.favorites.filter((favorite) => result.listings.some((listing) => listing.id === favorite.id));
+  state.favorites = favoritesResult.favorites;
+  state.providerAvailability = availabilityResult.availability;
 }
 
 async function refreshConversations() {
   const result = await apiRequest("/api/messages", { method: "GET", headers: {} });
   state.conversations = result.conversations;
+}
+
+async function refreshNotifications() {
+  const result = await apiRequest("/api/notifications", { method: "GET", headers: {} });
+  state.notifications = result.notifications;
 }
 
 async function openConversation(contractId) {
@@ -350,6 +368,11 @@ async function openConversation(contractId) {
   state.activeChat = result.conversation;
   state.chatMessages = result.messages;
   state.view = "chat";
+}
+
+async function loadContractNotes(contractId) {
+  const result = await apiRequest(`/api/contracts/${encodeURIComponent(contractId)}/notes`, { method: "GET", headers: {} });
+  state.contractNotes = result.notes;
 }
 
 async function initializeAuth() {
@@ -376,7 +399,7 @@ function authScreen() {
   const registering = state.authMode === "register";
   return `<main class="auth-wrap">
     <section class="auth-aside">
-      <div class="auth-brand-row"><div class="brand-lockup" data-action="auth-home"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div>${installButton()}</div>
+      <div class="auth-brand-row"><div class="brand-lockup" data-action="auth-home"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div></div>
       <div class="auth-message"><h1>Serviços perto.<br>Conexões de verdade.</h1><p>Encontre profissionais autônomos no seu bairro e combine serviços do seu jeito.</p><div class="auth-art" aria-hidden="true">A</div></div>
       <div class="auth-footer">Uma comunidade que valoriza quem faz acontecer.</div>
     </section>
@@ -421,7 +444,7 @@ function shell(content) {
   return `<div class="app-frame">
     <header class="topbar">
       <div class="brand-lockup" data-action="go-home" role="button" tabindex="0"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div>
-      <div class="top-actions">${installButton()}<div class="user-chip">${avatar(initials(state.user) || "V", false, state.profilePhoto)}<span>${esc(state.user)}</span></div><button class="icon-button" type="button" data-action="open-drawer" aria-label="Abrir menu">☰</button></div>
+      <div class="top-actions"><div class="user-chip">${avatar(initials(state.user) || "V", false, state.profilePhoto)}<span>${esc(state.user)}</span></div><button class="icon-button" type="button" data-action="open-drawer" aria-label="Abrir menu">☰</button></div>
     </header>
     <main class="page-shell"><div class="content">${content}</div></main>
     <nav class="bottom-nav" aria-label="Navegação principal">
@@ -446,10 +469,9 @@ function drawer() {
     <div class="drawer-user">${avatar(initials(state.user), true, state.profilePhoto)}<div><strong>${esc(state.user)}</strong><span>Minha conta</span></div></div>
     <nav class="drawer-nav">${links.map(([icon, text, target]) => `<button class="drawer-link" data-action="${target}"><span>${icon}</span>${text}</button>`).join("")}
       <button class="drawer-link" data-action="${state.userRole === "provider" || state.userRole === "both" ? "my-services" : "offer-service"}"><span>✦</span>${state.userRole === "provider" || state.userRole === "both" ? "Meus serviços" : "Oferecer meus serviços"}</button>
-      ${isInstalled() ? "" : `<button class="drawer-link" data-action="install-app"><span>↓</span>Instalar app</button>`}
       <button class="drawer-link logout-link" data-action="logout"><span>↪</span>Sair da conta</button>
     </nav>
-    <div class="drawer-footer">AutonoMe · versão 1.2.0</div>
+    <div class="drawer-footer">AutonoMe · versão 1.5.0</div>
   </aside>`;
 }
 
@@ -547,21 +569,53 @@ function providerSetupScreen() {
 function myServicesScreen() {
   return `<p class="eyebrow">Seu trabalho, sua vitrine</p><h1>Meus serviços</h1><p class="lead">Gerencie os anúncios que os clientes podem encontrar.</p>
     <div class="section-heading"><div><h2>Serviços publicados</h2><p>${state.ownListings.length} ${state.ownListings.length === 1 ? "anúncio" : "anúncios"}</p></div>${button("Adicionar serviço", "offer-service", { small: true })}</div>
-    <div class="listing-list">${state.ownListings.length ? state.ownListings.map((listing) => `<article class="listing-card">${avatar(listing.initials, false, listing.profilePhoto)}<div><h3>${esc(listing.service)}</h3><p>${esc(listing.category)} · ${esc(listing.location)}</p><div class="inline-meta"><span>${esc(listing.price)}</span></div></div><span class="listing-actions"><button class="button secondary small" data-action="edit-listing" data-listing="${esc(listing.id)}">Editar</button><button class="button danger small" data-action="delete-listing" data-listing="${esc(listing.id)}">Excluir</button></span></article>`).join("") : `<section class="card empty-state"><div class="empty-icon">✦</div><h2>Você ainda não publicou serviços</h2><p>Cadastre seu primeiro serviço para aparecer para clientes da sua região.</p>${button("Cadastrar serviço", "offer-service")}</section>`}</div>`;
+    <div class="listing-list">${state.ownListings.length ? state.ownListings.map((listing) => `<article class="listing-card">${avatar(listing.initials, false, listing.profilePhoto)}<div><h3>${esc(listing.service)}</h3><p>${esc(listing.category)} · ${esc(listing.location)}</p><div class="inline-meta"><span>${esc(listing.price)}</span></div></div><span class="listing-actions"><button class="button secondary small" data-action="edit-listing" data-listing="${esc(listing.id)}">Editar</button><button class="button danger small" data-action="delete-listing" data-listing="${esc(listing.id)}">Excluir</button></span></article>`).join("") : `<section class="card empty-state"><div class="empty-icon">✦</div><h2>Você ainda não publicou serviços</h2><p>Cadastre seu primeiro serviço para aparecer para clientes da sua região.</p>${button("Cadastrar serviço", "offer-service")}</section>`}</div>
+    <section class="card profile-block availability-card"><h2>Horários de atendimento</h2><p>Os clientes só verão os horários que você disponibilizar.</p>
+      ${state.providerAvailability.length ? `<div class="availability-list">${state.providerAvailability.map((slot, index) => `<div class="availability-row"><span><strong>${weekdays[slot.weekday]}</strong> · ${esc(slot.time)}</span><button class="text-button" type="button" data-action="remove-availability-slot" data-index="${index}" aria-label="Remover ${weekdays[slot.weekday]} às ${esc(slot.time)}">Remover</button></div>`).join("")}</div>` : `<p class="field-note">Nenhum horário cadastrado. Configure sua disponibilidade para receber pedidos de contratação.</p>`}
+      <form class="availability-form" data-form="availability"><div class="two-col"><div class="field"><label for="availability-day">Dia da semana</label><select id="availability-day" name="weekday">${weekdays.map((day, index) => `<option value="${index}">${["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][index]}</option>`).join("")}</select></div><div class="field"><label for="availability-time">Horário</label><input id="availability-time" name="time" type="time" step="900" required></div></div><button class="button secondary" type="button" data-action="add-availability-slot">Adicionar horário</button><button class="button" type="submit">Salvar disponibilidade</button></form>
+    </section>`;
+}
+
+function bookingDays() {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + index);
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return { day: weekdays[date.getDay()], date: `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`, value };
+  });
+}
+
+async function loadSelectedAvailability() {
+  const day = bookingDays()[state.selectedDay];
+  if (!day || !state.provider) return;
+  state.availabilityLoading = true;
+  state.availableTimes = [];
+  state.availabilityConfigured = false;
+  state.selectedTime = "";
+  try {
+    const params = new URLSearchParams({
+      listingId: state.provider.id,
+      date: day.value,
+      timezoneOffsetMinutes: String(new Date().getTimezoneOffset()),
+    });
+    const result = await apiRequest(`/api/availability?${params}`, { method: "GET", headers: {} });
+    state.availabilityConfigured = result.configured;
+    state.availableTimes = result.times;
+  } finally {
+    state.availabilityLoading = false;
+  }
 }
 
 function calendarScreen() {
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() + index);
-    return { day: weekdays[date.getDay()], date: `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}` };
-  });
+  const days = bookingDays();
   return `<p class="eyebrow">Agendar serviço</p><h1>Escolha um horário</h1><p class="lead">Veja a disponibilidade de ${esc(state.provider.name)} e envie seu pedido de contratação.</p>
     <section class="card profile-hero">${avatar(state.provider.initials)}<div><h3>${esc(state.provider.name)}</h3><p>${esc(state.provider.service)} · <span class="status done">Novo</span></p></div></section>
     ${sectionHeading("Escolha o dia", "Selecione uma data para consultar a disponibilidade.")}
     <div class="day-picker">${days.map((day, index) => `<button class="day-option ${state.selectedDay === index ? "selected" : ""}" data-action="select-day" data-day="${index}"><span>${day.day}</span><strong>${day.date}</strong></button>`).join("")}</div>
     ${sectionHeading("Horários disponíveis", "Selecione um horário para enviar o pedido.")}
-    <div class="time-grid">${times.map((time) => `<button class="time-option ${state.selectedTime === time ? "selected" : ""}" data-action="select-time" data-time="${time}" aria-pressed="${state.selectedTime === time}">${time}</button>`).join("")}</div>
+    ${state.availabilityLoading ? `<p class="field-note">Consultando horários...</p>` : !state.availabilityConfigured ? `<div class="booking-summary">Este profissional ainda não configurou os horários de atendimento.</div>` : state.availableTimes.length ? `<div class="time-grid">${state.availableTimes.map((time) => `<button class="time-option ${state.selectedTime === time ? "selected" : ""}" data-action="select-time" data-time="${esc(time)}" aria-pressed="${state.selectedTime === time}">${esc(time)}</button>`).join("")}</div>` : `<div class="booking-summary">Não há horários disponíveis nesta data. Escolha outro dia.</div>`}
+    <div class="field"><label for="booking-address">Endereço ou região do atendimento (opcional)</label><input id="booking-address" name="address" maxlength="250" autocomplete="street-address" value="${esc(state.bookingAddress)}" placeholder="Ex.: Rua, número e bairro"></div>
     <div class="field"><label for="booking-details">Conte ao profissional o que você precisa (opcional)</label><textarea id="booking-details" rows="3" maxlength="500" placeholder="Descreva brevemente o serviço ou tire uma dúvida.">${esc(state.bookingDetails)}</textarea></div>
     ${state.selectedTime ? `<div class="booking-summary">Horário selecionado: <strong>${days[state.selectedDay].day}, ${days[state.selectedDay].date} às ${state.selectedTime}</strong></div>` : ""}
     ${state.userRole === "provider" ? `<div class="booking-summary">Seu perfil está configurado apenas para oferecer serviços. Ative também o modo contratante nas configurações para contratar profissionais.</div>` : ""}
@@ -588,7 +642,8 @@ function contractDetailScreen() {
   if (!contract) return `<div class="card empty-state"><h2>Contrato não encontrado</h2>${button("Voltar aos contratos", "contracts", { variant: "secondary" })}</div>`;
   return `<p class="eyebrow">Detalhes do serviço</p><h1>Especificações</h1>
     <section class="card profile-hero">${avatar(initials(contract.name), true, contract.profilePhoto)}<div><p class="eyebrow">Serviço combinado</p><h1>${esc(contract.name)}</h1><p>${esc(contract.service)} · ${esc(contract.date)}</p></div></section>
-    <section class="card profile-block"><span class="status ${contract.state === "Confirmado" ? "ok" : ["Cancelada", "Pedido negado", "Concluído"].includes(contract.state) ? "done" : ""}">${esc(contract.state)}</span><h3 style="margin-top:18px">Sobre o serviço</h3><p>${esc(provider.about || "Descrição do serviço a ser ou que foi prestado.")}</p>${contract.details ? `<h3 style="margin-top:20px">Mensagem do cliente</h3><p>${esc(contract.details)}</p>` : ""}<h3 style="margin-top:20px">Profissional</h3><p>${esc(contract.service)} · ${esc(provider.location || "Cidade - Estado")}</p></section>
+    <section class="card profile-block"><span class="status ${contract.state === "Confirmado" ? "ok" : ["Cancelada", "Pedido negado", "Concluído"].includes(contract.state) ? "done" : ""}">${esc(contract.state)}</span><h3 style="margin-top:18px">Sobre o serviço</h3><p>${esc(provider.about || "Descrição do serviço a ser ou que foi prestado.")}</p>${contract.details ? `<h3 style="margin-top:20px">Mensagem do cliente</h3><p>${esc(contract.details)}</p>` : ""}${contract.serviceAddress ? `<h3 style="margin-top:20px">Endereço do atendimento</h3><p>${esc(contract.serviceAddress)}</p>` : ""}<h3 style="margin-top:20px">Profissional</h3><p>${esc(contract.service)} · ${esc(provider.location || "Cidade - Estado")}</p></section>
+    <section class="card profile-block contract-notes"><h2>Anotações privadas</h2><p>Essas anotações ficam visíveis somente para você.</p>${state.contractNotes.length ? `<div class="note-list">${state.contractNotes.map((note) => `<p class="contract-note">${esc(note.body)}</p>`).join("")}</div>` : `<p class="field-note">Você ainda não adicionou anotações.</p>`}<form class="form-stack" data-form="contract-note"><div class="field"><label for="contract-note">Nova anotação</label><textarea id="contract-note" name="body" maxlength="2000" rows="3" required placeholder="Anote detalhes importantes para esta contratação."></textarea></div><button class="button" type="submit">Salvar anotação</button></form></section>
     <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap">${button("Voltar aos contratos", "contracts", { variant: "secondary" })}${!["Cancelada", "Pedido negado"].includes(contract.state) ? `<button class="button" type="button" data-action="open-contract-chat" data-contract="${esc(contract.id)}">Conversar</button>` : ""}${contract.tab === "requested" && ["Aguardando confirmação", "Confirmado"].includes(contract.state) ? `<button class="button danger" type="button" data-action="cancel-contract" data-contract="${esc(contract.id)}">Cancelar contratação</button>` : ""}${contract.tab === "hired" && contract.state === "Aguardando confirmação" ? `<button class="button" type="button" data-action="respond-contract" data-status="confirm" data-contract="${esc(contract.id)}">Aceitar pedido</button><button class="button danger" type="button" data-action="respond-contract" data-status="decline" data-contract="${esc(contract.id)}">Recusar pedido</button>` : ""}</div>`;
 }
 
@@ -611,9 +666,15 @@ function formatMessageTime(timestamp) {
   return new Date(Number(timestamp) * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatNotificationTime(timestamp) {
+  if (!timestamp) return "";
+  return new Date(Number(timestamp) * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 function notificationsScreen() {
-  return `<div class="section-heading"><div><p class="eyebrow">Fique por dentro</p><h1>Notificações</h1></div>${state.notifications.length ? `<button class="text-button" data-action="clear-notifications">Excluir todas</button>` : ""}</div>
-    ${state.notifications.length ? `<div class="stack">${state.notifications.map((notification) => `<article class="card notification-card"><div class="card-top"><h3>${esc(notification.title)}</h3><span class="message-time">${esc(notification.time)}</span></div><p>${esc(notification.text)}</p>${notification.request ? `<div class="notification-actions"><button class="button small" data-action="accept-request" data-request="${esc(notification.id)}">Aceitar</button><button class="button secondary small" data-action="decline-request" data-request="${esc(notification.id)}">Negar</button></div>` : ""}</article>`).join("")}</div>` : `<section class="card empty-state"><div class="empty-icon">♧</div><h2>Sem notificações</h2><p>Quando tiver novidades sobre seus serviços, elas aparecerão aqui.</p></section>`}`;
+  const hasUnread = state.notifications.some((notification) => !notification.read);
+  return `<div class="section-heading"><div><p class="eyebrow">Fique por dentro</p><h1>Notificações</h1></div>${state.notifications.length ? `<span class="notification-header-actions">${hasUnread ? `<button class="text-button" data-action="mark-all-notifications-read">Marcar todas como lidas</button>` : ""}<button class="text-button" data-action="clear-notifications">Excluir todas</button></span>` : ""}</div>
+    ${state.notifications.length ? `<div class="stack">${state.notifications.map((notification) => `<article class="card notification-card ${notification.read ? "" : "notification-unread"}"><div class="card-top"><h3>${esc(notification.title)}</h3><span class="message-time">${esc(formatNotificationTime(notification.time))}</span></div><p>${esc(notification.text)}</p><div class="notification-actions">${notification.contractId ? `<button class="button secondary small" data-action="open-notification-contract" data-contract="${esc(notification.contractId)}">Ver contratação</button>` : ""}${notification.read ? "" : `<button class="text-button" data-action="mark-notification-read" data-notification="${esc(notification.id)}">Marcar como lida</button>`}</div></article>`).join("")}</div>` : `<section class="card empty-state"><div class="empty-icon">♧</div><h2>Sem notificações</h2><p>Quando tiver novidades sobre seus serviços, elas aparecerão aqui.</p></section>`}`;
 }
 
 function settingsScreen() {
@@ -621,7 +682,7 @@ function settingsScreen() {
     <section class="card profile-block"><h3>Como você quer usar o app?</h3><p>Você pode alterar esse perfil quando quiser.</p>${roleOptions(state.userRole)}</section>
     <section class="card profile-block"><h3>Preferências</h3>${Object.entries(state.settings).map(([name, enabled]) => `<div class="switch-row"><div class="switch-copy"><strong>${esc(name)}</strong><span>${name === "Modo Escuro" ? "Ajuste a aparência do aplicativo." : name === "Notificações" ? "Receba novidades sobre seus serviços." : `Controle o acesso do app a ${name.replace("Permitir ", "").toLowerCase()}.`}</span></div><button class="switch" type="button" role="switch" aria-checked="${enabled}" aria-label="${esc(name)}" data-action="toggle-setting" data-setting="${esc(name)}"></button></div>`).join("")}</section>
     <section class="card profile-block danger-zone"><h3>Desativar conta</h3><p>Sua conta será movida para a lista segura de usuários desativados. Você precisará confirmar a ação com um código enviado ao e-mail cadastrado.</p>${button("Solicitar desativação", "delete-account", { variant: "danger" })}</section>
-    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.4.0</p></section>`;
+    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.5.0</p></section>`;
 }
 
 function favoritesScreen() {
@@ -819,6 +880,10 @@ function openProvider(id) {
 }
 
 app.addEventListener("input", (event) => {
+  if (event.target.matches("#booking-address")) {
+    state.bookingAddress = event.target.value;
+    return;
+  }
   if (event.target.matches("#booking-details")) {
     state.bookingDetails = event.target.value;
     return;
@@ -958,6 +1023,15 @@ app.addEventListener("click", async (event) => {
       }
       break;
     }
+    case "mark-all-notifications-read":
+      try {
+        await apiRequest("/api/notifications", { method: "POST", body: "{}" });
+        await refreshNotifications();
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+      break;
     case "delete-account":
       if (!window.confirm("Deseja mesmo desativar sua conta? Você precisará confirmar essa ação pelo código enviado ao seu e-mail.")) return;
       try {
@@ -993,6 +1067,9 @@ app.addEventListener("click", async (event) => {
       state.activeConversationId = "";
       state.chatMessages = [];
       state.notifications = [];
+      state.providerAvailability = [];
+      state.availableTimes = [];
+      state.contractNotes = [];
       state.view = "auth";
       state.authMode = "login";
       state.drawerOpen = false;
@@ -1015,15 +1092,26 @@ app.addEventListener("click", async (event) => {
       state.selectedTime = "";
       state.selectedDay = 0;
       state.bookingDetails = "";
+      state.bookingAddress = "";
+      try {
+        await loadSelectedAvailability();
+      } catch (error) {
+        showToast(error.message);
+      }
       break;
-    case "select-day": state.selectedDay = Number(target.dataset.day); break;
-    case "select-time": state.selectedTime = target.dataset.time; break;
+    case "select-day":
+      state.selectedDay = Number(target.dataset.day);
+      try {
+        await loadSelectedAvailability();
+      } catch (error) {
+        showToast(error.message);
+      }
+      break;
+    case "select-time":
+      if (state.availableTimes.includes(target.dataset.time)) state.selectedTime = target.dataset.time;
+      break;
     case "submit-booking": {
       if (!state.selectedTime) return;
-      const date = new Date();
-      date.setDate(date.getDate() + state.selectedDay);
-      const dayName = weekdays[date.getDay()];
-      const dateLabel = `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
       if (!["client", "both"].includes(state.userRole)) {
         showToast("Ative o modo contratante no seu perfil para agendar.");
         return;
@@ -1039,16 +1127,21 @@ app.addEventListener("click", async (event) => {
         return;
       }
       try {
+        const selectedDate = bookingDays()[state.selectedDay];
         await apiRequest("/api/contracts", {
           method: "POST",
           body: JSON.stringify({
             listingId: state.provider.id,
-            date: `${dayName}, ${dateLabel} às ${state.selectedTime}`,
+            serviceDate: selectedDate.value,
+            time: state.selectedTime,
+            timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+            address: state.bookingAddress.trim(),
             details: state.bookingDetails,
           }),
         });
         await refreshRemoteData();
         state.bookingDetails = "";
+        state.bookingAddress = "";
         state.contractTab = "requested";
         state.view = "contracts";
         showToast("Pedido enviado ao profissional.");
@@ -1077,6 +1170,12 @@ app.addEventListener("click", async (event) => {
       break;
     case "contract-detail":
       state.detailId = target.dataset.contract;
+      state.contractNotes = [];
+      try {
+        await loadContractNotes(state.detailId);
+      } catch (error) {
+        showToast(error.message);
+      }
       state.view = "contract-detail";
       break;
     case "cancel-contract": {
@@ -1130,19 +1229,66 @@ app.addEventListener("click", async (event) => {
         return;
       }
       break;
-    case "notifications": state.view = "notifications"; state.drawerOpen = false; break;
-    case "clear-notifications": state.notifications = []; break;
-    case "accept-request":
-    case "decline-request": {
-      const notification = state.notifications.find((item) => item.id === target.dataset.request);
-      if (notification) {
-        notification.title = action === "accept-request" ? "Pedido aceito" : "Pedido negado";
-        notification.text = action === "accept-request" ? "Você aceitou o pedido de serviço." : "Você recusou o pedido de serviço.";
-        notification.request = false;
-        showToast(action === "accept-request" ? "Pedido aceito." : "Pedido recusado.");
+    case "notifications":
+      try {
+        await refreshNotifications();
+      } catch (error) {
+        showToast(error.message);
+      }
+      state.view = "notifications";
+      state.drawerOpen = false;
+      break;
+    case "clear-notifications":
+      try {
+        await apiRequest("/api/notifications", { method: "DELETE" });
+        state.notifications = [];
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+      break;
+    case "mark-notification-read":
+      try {
+        await apiRequest(`/api/notifications/${encodeURIComponent(target.dataset.notification)}/read`, { method: "POST", body: "{}" });
+        await refreshNotifications();
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+      break;
+    case "open-notification-contract":
+      try {
+        await refreshRemoteData();
+        const contract = state.contracts.find((item) => item.id === target.dataset.contract);
+        if (!contract) {
+          showToast("Esta contratação não está mais disponível.");
+          return;
+        }
+        state.detailId = contract.id;
+        await loadContractNotes(contract.id);
+        state.view = "contract-detail";
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+      break;
+    case "add-availability-slot": {
+      const weekday = Number(document.querySelector("#availability-day")?.value);
+      const timeInput = document.querySelector("#availability-time");
+      const serviceTime = timeInput?.value || "";
+      if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6 || !serviceTime || !timeInput.checkValidity()) {
+        showToast("Escolha um dia e um horário.");
+        return;
+      }
+      if (!state.providerAvailability.some((slot) => slot.weekday === weekday && slot.time === serviceTime)) {
+        state.providerAvailability.push({ weekday, time: serviceTime });
+        state.providerAvailability.sort((a, b) => a.weekday - b.weekday || a.time.localeCompare(b.time));
       }
       break;
     }
+    case "remove-availability-slot":
+      state.providerAvailability.splice(Number(target.dataset.index), 1);
+      break;
     case "settings":
       state.view = "settings";
       state.drawerOpen = false;
@@ -1157,16 +1303,32 @@ app.addEventListener("click", async (event) => {
       const provider = allListings().find((item) => item.id === target.dataset.provider);
       if (!provider) return;
       const existing = state.favorites.findIndex((item) => item.id === provider.id);
-      if (existing >= 0) state.favorites.splice(existing, 1);
-      else state.favorites.push(provider);
-      showToast(existing >= 0 ? "Profissional removido dos favoritos." : "Profissional adicionado aos favoritos.");
+      try {
+        await apiRequest(existing >= 0 ? `/api/favorites/${encodeURIComponent(provider.id)}` : "/api/favorites", {
+          method: existing >= 0 ? "DELETE" : "POST",
+          ...(existing >= 0 ? {} : { body: JSON.stringify({ listingId: provider.id }) }),
+        });
+        await refreshRemoteData();
+        showToast(existing >= 0 ? "Profissional removido dos favoritos." : "Profissional adicionado aos favoritos.");
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       break;
     }
     case "favorite-current": {
       const existing = state.favorites.findIndex((item) => item.id === state.provider.id);
-      if (existing >= 0) state.favorites.splice(existing, 1);
-      else state.favorites.push(state.provider);
-      showToast(existing >= 0 ? "Profissional removido dos favoritos." : "Profissional adicionado aos favoritos.");
+      try {
+        await apiRequest(existing >= 0 ? `/api/favorites/${encodeURIComponent(state.provider.id)}` : "/api/favorites", {
+          method: existing >= 0 ? "DELETE" : "POST",
+          ...(existing >= 0 ? {} : { body: JSON.stringify({ listingId: state.provider.id }) }),
+        });
+        await refreshRemoteData();
+        showToast(existing >= 0 ? "Profissional removido dos favoritos." : "Profissional adicionado aos favoritos.");
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
       break;
     }
     case "contact": state.view = "contact"; state.drawerOpen = false; break;
@@ -1178,7 +1340,6 @@ app.addEventListener("click", async (event) => {
     case "help": state.view = "help"; break;
     case "rate": state.selectedStars = Number(target.dataset.stars); break;
     case "review": state.view = "review"; break;
-    case "install-app": installApp(); return;
   }
   render();
 });
@@ -1231,7 +1392,6 @@ app.addEventListener("submit", async (event) => {
           showToast(error.message);
         }
         state.view = state.userRole !== "client" && !state.ownListings.length ? "provider-setup" : "home";
-        state.notifications.unshift({ id: `hello-${Date.now()}`, title: `Olá, ${name || state.user}!`, text: "Explore as áreas disponíveis e encontre seu próximo serviço.", time: "Agora", request: false });
       } catch (error) {
         showToast(error.message);
         return;
@@ -1253,7 +1413,6 @@ app.addEventListener("submit", async (event) => {
             showToast(error.message);
           }
           state.view = state.userRole !== "client" ? "provider-setup" : "home";
-          state.notifications.unshift({ id: `hello-${Date.now()}`, title: `Olá, ${state.user}!`, text: "Sua conta foi confirmada. Explore os serviços disponíveis.", time: "Agora", request: false });
         } else {
           await apiRequest("/api/auth/deactivate/verify", {
             method: "POST",
@@ -1316,6 +1475,35 @@ app.addEventListener("submit", async (event) => {
       showToast(editingListingId ? "Serviço atualizado." : "Seu serviço foi publicado!");
       break;
     }
+    case "availability": {
+      try {
+        const result = await apiRequest("/api/availability", {
+          method: "POST",
+          body: JSON.stringify({ availability: state.providerAvailability }),
+        });
+        state.providerAvailability = result.availability;
+        showToast("Sua disponibilidade foi atualizada.");
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+      break;
+    }
+    case "contract-note": {
+      const body = String(data.get("body") || "").trim();
+      try {
+        await apiRequest(`/api/contracts/${encodeURIComponent(state.detailId)}/notes`, {
+          method: "POST",
+          body: JSON.stringify({ body }),
+        });
+        await loadContractNotes(state.detailId);
+        showToast("Anotação privada salva.");
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+      break;
+    }
     case "profile": {
       try {
         const result = await apiRequest("/api/auth/profile", {
@@ -1358,7 +1546,6 @@ app.addEventListener("submit", async (event) => {
       break;
     }
     case "contact":
-      state.notifications.unshift({ id: `contact-${Date.now()}`, title: `${state.contactType} enviada`, text: `Obrigado, ${String(data.get("name") || "").trim()}. Nossa equipe recebeu sua mensagem.`, time: "Agora", request: false });
       state.view = "success";
       break;
     case "review":
@@ -1380,36 +1567,6 @@ app.addEventListener("keydown", (event) => {
 });
 
 render();
-
-async function installApp() {
-  if (installPromptEvent) {
-    await installPromptEvent.prompt();
-    const choice = await installPromptEvent.userChoice;
-    installPromptEvent = null;
-    render();
-    if (choice.outcome === "accepted") showToast("AutonoMe instalado no seu dispositivo.");
-    return;
-  }
-  if (isInstalled()) {
-    showToast("O AutonoMe já está instalado no seu dispositivo.");
-  } else if (isAppleMobile()) {
-    showToast("No Safari, toque em Compartilhar e escolha Adicionar à Tela de Início.");
-  } else {
-    showToast("Use o menu do navegador e escolha Instalar app ou Adicionar à tela inicial.");
-  }
-}
-
-window.addEventListener("beforeinstallprompt", (event) => {
-  event.preventDefault();
-  installPromptEvent = event;
-  render();
-});
-
-window.addEventListener("appinstalled", () => {
-  installPromptEvent = null;
-  render();
-  showToast("AutonoMe instalado no seu dispositivo.");
-});
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
   navigator.serviceWorker.register("./service-worker.js")

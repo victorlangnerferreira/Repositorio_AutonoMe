@@ -30,8 +30,8 @@ android {
         applicationId "br.com.autonome.app"
         minSdk 23
         targetSdk 34
-        versionCode 3
-        versionName "1.4.0"
+        versionCode 4
+        versionName "1.5.0"
         buildConfigField "String", "AUTONOME_APP_URL", JsonOutput.toJson(autonomeAppUrl)
     }
 

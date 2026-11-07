@@ -14,6 +14,7 @@ import traceback
 import urllib.request
 import uuid
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -144,10 +145,45 @@ def init_db():
                 service TEXT NOT NULL,
                 date TEXT NOT NULL,
                 details TEXT NOT NULL DEFAULT '',
+                service_date TEXT,
+                service_time TEXT,
+                service_address TEXT NOT NULL DEFAULT '',
                 state TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS availability (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                weekday INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+                service_time TEXT NOT NULL,
+                PRIMARY KEY (user_id, weekday, service_time)
+            );
+            CREATE TABLE IF NOT EXISTS favorites (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                listing_id TEXT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (user_id, listing_id)
+            );
+            CREATE TABLE IF NOT EXISTS contract_notes (
+                id TEXT PRIMARY KEY,
+                contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                contract_id TEXT REFERENCES contracts(id) ON DELETE SET NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS contract_notes_user_lookup
+                ON contract_notes(contract_id, user_id, created_at);
+            CREATE INDEX IF NOT EXISTS notifications_user_lookup
+                ON notifications(user_id, created_at);
             CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY,
                 contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
@@ -173,6 +209,19 @@ def init_db():
         contract_columns = {row["name"] for row in db.execute("PRAGMA table_info(contracts)")}
         if "details" not in contract_columns:
             db.execute("ALTER TABLE contracts ADD COLUMN details TEXT NOT NULL DEFAULT ''")
+        for column, definition in (
+            ("service_date", "TEXT"),
+            ("service_time", "TEXT"),
+            ("service_address", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if column not in contract_columns:
+                db.execute(f"ALTER TABLE contracts ADD COLUMN {column} {definition}")
+        db.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS contracts_one_active_per_provider_slot
+               ON contracts(provider_id, service_date, service_time)
+               WHERE service_date IS NOT NULL AND service_time IS NOT NULL
+                 AND state IN ('Aguardando confirmação', 'Confirmado')"""
+        )
         user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
         for column in ("profile_bio", "profile_location", "profile_photo"):
             if column not in user_columns:
@@ -365,6 +414,7 @@ def public_contract(row, current_user_id):
         "service": row["service"],
         "date": row["date"],
         "details": row["details"],
+        "serviceAddress": row["service_address"],
         "state": row["state"],
         "tab": "requested" if is_client else "hired",
         "category": row["category"],
@@ -374,6 +424,41 @@ def public_contract(row, current_user_id):
         "clientName": row["client_name"],
         "providerName": row["provider_name"],
         "profilePhoto": row["provider_photo"] if is_client else row["client_photo"],
+    }
+
+
+def valid_service_time(value):
+    return bool(re.fullmatch(r"(?:[01]\d|2[0-3]):(?:00|15|30|45)", value))
+
+
+def parse_timezone_offset(value):
+    if isinstance(value, bool) or not re.fullmatch(r"-?\d+", str(value)):
+        raise APIError(HTTPStatus.BAD_REQUEST, "Fuso horário inválido.")
+    try:
+        offset = int(value)
+    except (TypeError, ValueError) as error:
+        raise APIError(HTTPStatus.BAD_REQUEST, "Fuso horário inválido.") from error
+    if not -840 <= offset <= 840:
+        raise APIError(HTTPStatus.BAD_REQUEST, "Fuso horário inválido.")
+    return offset
+
+
+def public_contract_note(row):
+    return {
+        "id": row["id"],
+        "body": row["body"],
+        "createdAt": row["created_at"],
+    }
+
+
+def public_notification(row):
+    return {
+        "id": row["id"],
+        "contractId": row["contract_id"],
+        "title": row["title"],
+        "text": row["body"],
+        "read": bool(row["is_read"]),
+        "time": row["created_at"],
     }
 
 
@@ -465,7 +550,8 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             else:
                 self.send_json(HTTPStatus.OK, {"user": public_user(user)})
             return
-        if request_path in {"/api/listings", "/api/contracts", "/api/messages", "/api/auth/profile"}:
+        note_match = re.fullmatch(r"/api/contracts/([0-9a-f-]+)/notes", request_path)
+        if request_path in {"/api/listings", "/api/contracts", "/api/messages", "/api/auth/profile", "/api/favorites", "/api/availability", "/api/notifications"} or note_match:
             try:
                 if request_path == "/api/auth/profile":
                     with database() as db:
@@ -475,6 +561,16 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                     query = urlsplit(self.path).query
                     contract_id = parse_qs(query).get("contractId", [""])[0]
                     response = self.get_message_data(contract_id)
+                elif request_path == "/api/availability":
+                    query = parse_qs(urlsplit(self.path).query)
+                    listing_id = query.get("listingId", [""])[0]
+                    service_date = query.get("date", [""])[0]
+                    offset = query.get("timezoneOffsetMinutes", ["0"])[0]
+                    response = self.get_listing_availability(listing_id, service_date, offset) if listing_id else self.get_own_availability()
+                elif request_path == "/api/notifications":
+                    response = self.get_app_data(request_path)
+                elif note_match:
+                    response = self.get_contract_notes(note_match.group(1))
                 else:
                     response = self.get_app_data(request_path)
                 self.send_json(HTTPStatus.OK, response)
@@ -541,6 +637,18 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             return self.create_message(payload)
         if path == "/api/contracts":
             return self.create_contract(payload)
+        if path == "/api/availability":
+            return self.save_availability(payload)
+        if path == "/api/favorites":
+            return self.add_favorite(payload)
+        if path == "/api/notifications":
+            return self.mark_all_notifications_read()
+        match = re.fullmatch(r"/api/notifications/([0-9a-f-]+)/read", path)
+        if match:
+            return self.mark_notification_read(match.group(1))
+        match = re.fullmatch(r"/api/contracts/([0-9a-f-]+)/notes", path)
+        if match:
+            return self.create_contract_note(match.group(1), payload)
         match = re.fullmatch(r"/api/listings/([0-9a-f-]+)", path)
         if match:
             return self.update_listing(match.group(1), payload)
@@ -586,6 +694,28 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                        WHERE listings.active = 1 ORDER BY listings.created_at DESC"""
                 ).fetchall()
                 return {"listings": [public_listing(row) for row in rows]}
+            if path == "/api/favorites":
+                rows = db.execute(
+                    """SELECT listings.*, users.name, users.profile_bio, users.profile_location, users.profile_photo,
+                              EXISTS(
+                                  SELECT 1 FROM contracts
+                                  WHERE contracts.listing_id = listings.id
+                                    AND contracts.state IN ('Aguardando confirmação', 'Confirmado')
+                              ) AS is_booked
+                       FROM favorites
+                       JOIN listings ON listings.id = favorites.listing_id AND listings.active = 1
+                       JOIN users ON users.id = listings.user_id
+                       WHERE favorites.user_id = ? ORDER BY favorites.created_at DESC""",
+                    (user["id"],),
+                ).fetchall()
+                return {"favorites": [public_listing(row) for row in rows]}
+            if path == "/api/notifications":
+                rows = db.execute(
+                    """SELECT id, contract_id, title, body, is_read, created_at
+                       FROM notifications WHERE user_id = ? ORDER BY created_at DESC, rowid DESC""",
+                    (user["id"],),
+                ).fetchall()
+                return {"notifications": [public_notification(row) for row in rows]}
             rows = db.execute(
                 """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
                           clients.name AS client_name, clients.profile_photo AS client_photo,
@@ -599,6 +729,170 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                 (user["id"], user["id"]),
             ).fetchall()
             return {"contracts": [public_contract(row, user["id"]) for row in rows]}
+
+    def get_own_availability(self):
+        with database() as db:
+            user = self.require_session_user(db)
+            rows = db.execute(
+                "SELECT weekday, service_time FROM availability WHERE user_id = ? ORDER BY weekday, service_time",
+                (user["id"],),
+            ).fetchall()
+            return {"availability": [{"weekday": row["weekday"], "time": row["service_time"]} for row in rows]}
+
+    def get_listing_availability(self, listing_id, service_date, timezone_offset_minutes=0):
+        if not re.fullmatch(r"[0-9a-f-]{36}", listing_id):
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha um serviço válido.")
+        offset = parse_timezone_offset(timezone_offset_minutes)
+        try:
+            selected_date = date.fromisoformat(service_date)
+        except ValueError as error:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha uma data válida.") from error
+        if selected_date.isoformat() != service_date:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha uma data válida.")
+        with database() as db:
+            self.require_session_user(db)
+            listing = db.execute(
+                "SELECT user_id FROM listings WHERE id = ? AND active = 1",
+                (listing_id,),
+            ).fetchone()
+            if listing is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Este serviço não está mais disponível.")
+            has_active_booking = db.execute(
+                """SELECT 1 FROM contracts WHERE listing_id = ?
+                   AND state IN ('Aguardando confirmação', 'Confirmado') LIMIT 1""",
+                (listing_id,),
+            ).fetchone()
+            if has_active_booking:
+                return {"configured": True, "times": []}
+            has_schedule = db.execute(
+                "SELECT 1 FROM availability WHERE user_id = ? LIMIT 1",
+                (listing["user_id"],),
+            ).fetchone()
+            if not has_schedule:
+                return {"configured": False, "times": []}
+            rows = db.execute(
+                """SELECT availability.service_time FROM availability
+                   WHERE availability.user_id = ? AND availability.weekday = ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM contracts
+                         WHERE contracts.provider_id = availability.user_id
+                           AND contracts.service_date = ?
+                           AND contracts.service_time = availability.service_time
+                           AND contracts.state IN ('Aguardando confirmação', 'Confirmado')
+                     )
+                   ORDER BY availability.service_time""",
+                (listing["user_id"], (selected_date.weekday() + 1) % 7, service_date),
+            ).fetchall()
+            local_now = datetime.now(timezone.utc) - timedelta(minutes=offset)
+            times = [row["service_time"] for row in rows]
+            if selected_date == local_now.date():
+                times = [service_time for service_time in times if service_time > local_now.strftime("%H:%M")]
+            return {"configured": True, "times": times}
+
+    def save_availability(self, payload):
+        slots = payload.get("availability")
+        if not isinstance(slots, list) or len(slots) > 84:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe até 84 horários de atendimento.")
+        validated = set()
+        for slot in slots:
+            if not isinstance(slot, dict):
+                raise APIError(HTTPStatus.BAD_REQUEST, "Revise os horários informados.")
+            weekday = slot.get("weekday")
+            service_time = str(slot.get("time", ""))
+            if isinstance(weekday, bool) or not isinstance(weekday, int) or not 0 <= weekday <= 6 or not valid_service_time(service_time):
+                raise APIError(HTTPStatus.BAD_REQUEST, "Revise o dia e o horário informados.")
+            validated.add((weekday, service_time))
+        with database() as db:
+            user = self.require_session_user(db)
+            if user["role"] not in {"provider", "both"}:
+                raise APIError(HTTPStatus.FORBIDDEN, "Ative o perfil profissional para configurar seus horários.")
+            db.execute("DELETE FROM availability WHERE user_id = ?", (user["id"],))
+            db.executemany(
+                "INSERT INTO availability (user_id, weekday, service_time) VALUES (?, ?, ?)",
+                [(user["id"], weekday, service_time) for weekday, service_time in sorted(validated)],
+            )
+        return HTTPStatus.OK, {"availability": [{"weekday": day, "time": value} for day, value in sorted(validated)]}, []
+
+    def add_favorite(self, payload):
+        listing_id = str(payload.get("listingId", ""))
+        if not re.fullmatch(r"[0-9a-f-]{36}", listing_id):
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha um profissional válido.")
+        with database() as db:
+            user = self.require_session_user(db)
+            listing = db.execute(
+                "SELECT user_id FROM listings WHERE id = ? AND active = 1",
+                (listing_id,),
+            ).fetchone()
+            if listing is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Este serviço não está mais disponível.")
+            if listing["user_id"] == user["id"]:
+                raise APIError(HTTPStatus.BAD_REQUEST, "Você não pode salvar seu próprio serviço.")
+            db.execute(
+                "INSERT OR IGNORE INTO favorites (user_id, listing_id, created_at) VALUES (?, ?, ?)",
+                (user["id"], listing_id, int(time.time())),
+            )
+        return HTTPStatus.CREATED, {"message": "Profissional salvo nos favoritos."}, []
+
+    def get_contract_notes(self, contract_id):
+        with database() as db:
+            user = self.require_session_user(db)
+            contract = db.execute(
+                "SELECT id FROM contracts WHERE id = ? AND (client_id = ? OR provider_id = ?)",
+                (contract_id, user["id"], user["id"]),
+            ).fetchone()
+            if contract is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Contratação não encontrada.")
+            rows = db.execute(
+                """SELECT id, body, created_at FROM contract_notes
+                   WHERE contract_id = ? AND user_id = ? ORDER BY created_at, rowid""",
+                (contract_id, user["id"]),
+            ).fetchall()
+            return {"notes": [public_contract_note(row) for row in rows]}
+
+    def create_contract_note(self, contract_id, payload):
+        body = str(payload.get("body", "")).strip()
+        if not body or len(body) > 2000:
+            raise APIError(HTTPStatus.BAD_REQUEST, "A anotação deve ter entre 1 e 2.000 caracteres.")
+        with database() as db:
+            user = self.require_session_user(db)
+            contract = db.execute(
+                "SELECT id FROM contracts WHERE id = ? AND (client_id = ? OR provider_id = ?)",
+                (contract_id, user["id"], user["id"]),
+            ).fetchone()
+            if contract is None:
+                raise APIError(HTTPStatus.NOT_FOUND, "Contratação não encontrada.")
+            note_id = str(uuid.uuid4())
+            created_at = int(time.time())
+            db.execute(
+                "INSERT INTO contract_notes (id, contract_id, user_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
+                (note_id, contract_id, user["id"], body, created_at),
+            )
+        return HTTPStatus.CREATED, {"note": {"id": note_id, "body": body, "createdAt": created_at}}, []
+
+    def mark_notification_read(self, notification_id):
+        with database() as db:
+            user = self.require_session_user(db)
+            result = db.execute(
+                "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?",
+                (notification_id, user["id"]),
+            )
+            if not result.rowcount:
+                raise APIError(HTTPStatus.NOT_FOUND, "Notificação não encontrada.")
+        return HTTPStatus.OK, {"message": "Notificação marcada como lida."}, []
+
+    def mark_all_notifications_read(self):
+        with database() as db:
+            user = self.require_session_user(db)
+            db.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (user["id"],))
+        return HTTPStatus.OK, {"message": "Notificações marcadas como lidas."}, []
+
+    @staticmethod
+    def create_notification(db, user_id, contract_id, title, body, created_at):
+        db.execute(
+            """INSERT INTO notifications (id, user_id, contract_id, title, body, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (str(uuid.uuid4()), user_id, contract_id, title, body, created_at),
+        )
 
     def get_message_data(self, contract_id):
         with database() as db:
@@ -803,6 +1097,20 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
         return HTTPStatus.OK, {"user": public_user(updated)}, []
 
     def handle_delete(self, path):
+        if path == "/api/notifications":
+            with database() as db:
+                user = self.require_session_user(db)
+                db.execute("DELETE FROM notifications WHERE user_id = ?", (user["id"],))
+            return HTTPStatus.OK, {"message": "Notificações removidas."}, []
+        favorite_match = re.fullmatch(r"/api/favorites/([0-9a-f-]+)", path)
+        if favorite_match:
+            with database() as db:
+                user = self.require_session_user(db)
+                db.execute(
+                    "DELETE FROM favorites WHERE user_id = ? AND listing_id = ?",
+                    (user["id"], favorite_match.group(1)),
+                )
+            return HTTPStatus.OK, {"message": "Profissional removido dos favoritos."}, []
         match = re.fullmatch(r"/api/listings/([0-9a-f-]+)", path)
         if not match:
             raise APIError(HTTPStatus.NOT_FOUND, "Endpoint não encontrado.")
@@ -816,14 +1124,28 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
 
     def create_contract(self, payload):
         listing_id = str(payload.get("listingId", ""))
-        date = str(payload.get("date", "")).strip()
+        service_date = str(payload.get("serviceDate", "")).strip()
+        service_time = str(payload.get("time", "")).strip()
+        service_address = str(payload.get("address", "")).strip()
         details = str(payload.get("details", "")).strip()
+        offset = parse_timezone_offset(payload.get("timezoneOffsetMinutes", 0))
         if not re.fullmatch(r"[0-9a-f-]{36}", listing_id):
             raise APIError(HTTPStatus.BAD_REQUEST, "Escolha um serviço válido.")
-        if not date or len(date) > 100:
-            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha uma data e horário.")
+        try:
+            selected_date = date.fromisoformat(service_date)
+        except ValueError as error:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha uma data válida.") from error
+        local_now = datetime.now(timezone.utc) - timedelta(minutes=offset)
+        if selected_date.isoformat() != service_date or selected_date < local_now.date():
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha uma data futura.")
+        if not valid_service_time(service_time):
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha um horário válido.")
+        if selected_date == local_now.date() and service_time <= local_now.strftime("%H:%M"):
+            raise APIError(HTTPStatus.BAD_REQUEST, "Escolha um horário futuro.")
         if len(details) > 500:
             raise APIError(HTTPStatus.BAD_REQUEST, "Os detalhes do pedido devem ter até 500 caracteres.")
+        if len(service_address) > 250:
+            raise APIError(HTTPStatus.BAD_REQUEST, "O endereço deve ter até 250 caracteres.")
         with database() as db:
             client = self.require_session_user(db)
             if client["role"] == "provider":
@@ -838,18 +1160,51 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                 raise APIError(HTTPStatus.NOT_FOUND, "Este serviço não está mais disponível.")
             if listing["user_id"] == client["id"]:
                 raise APIError(HTTPStatus.FORBIDDEN, "Você não pode contratar o seu próprio serviço.")
+            has_schedule = db.execute(
+                "SELECT 1 FROM availability WHERE user_id = ? LIMIT 1",
+                (listing["user_id"],),
+            ).fetchone()
+            if not has_schedule:
+                raise APIError(HTTPStatus.CONFLICT, "Este profissional ainda não configurou os horários de atendimento.")
+            available_slot = db.execute(
+                """SELECT 1 FROM availability WHERE user_id = ? AND weekday = ? AND service_time = ?""",
+                (listing["user_id"], (selected_date.weekday() + 1) % 7, service_time),
+            ).fetchone()
+            if not available_slot:
+                raise APIError(HTTPStatus.CONFLICT, "O profissional não disponibilizou esse horário.")
+            occupied_slot = db.execute(
+                """SELECT 1 FROM contracts WHERE provider_id = ? AND service_date = ? AND service_time = ?
+                   AND state IN ('Aguardando confirmação', 'Confirmado') LIMIT 1""",
+                (listing["user_id"], service_date, service_time),
+            ).fetchone()
+            if occupied_slot:
+                raise APIError(HTTPStatus.CONFLICT, "Este horário acabou de ser reservado. Escolha outro.")
+            weekday_names = ("Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb")
+            date_label = f"{weekday_names[(selected_date.weekday() + 1) % 7]}, {selected_date:%d/%m/%Y} às {service_time}"
             try:
                 contract_id = str(uuid.uuid4())
                 now = int(time.time())
                 db.execute(
                     """INSERT INTO contracts
-                       (id, listing_id, client_id, provider_id, service, date, details, state, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'Aguardando confirmação', ?, ?)""",
-                    (contract_id, listing_id, client["id"], listing["user_id"], listing["service"], date, details, now, now),
+                       (id, listing_id, client_id, provider_id, service, date, details, service_date, service_time,
+                        service_address, state, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Aguardando confirmação', ?, ?)""",
+                    (contract_id, listing_id, client["id"], listing["user_id"], listing["service"], date_label,
+                     details, service_date, service_time, service_address, now, now),
+                )
+                self.create_notification(
+                    db,
+                    listing["user_id"],
+                    contract_id,
+                    "Novo pedido de contratação",
+                    f"{client['name']} solicitou {listing['service']} para {date_label}.",
+                    now,
                 )
             except sqlite3.IntegrityError as error:
                 if "contracts.listing_id" in str(error):
                     raise APIError(HTTPStatus.CONFLICT, "Este profissional já recebeu um pedido ativo para este serviço.") from error
+                if "contracts.provider_id" in str(error):
+                    raise APIError(HTTPStatus.CONFLICT, "Este horário acabou de ser reservado. Escolha outro.") from error
                 raise
             row = db.execute(
                 """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
@@ -884,6 +1239,18 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                 "UPDATE contracts SET state = ?, updated_at = ? WHERE id = ?",
                 (new_state, int(time.time()), contract_id),
             )
+            recipient_id = contract["client_id"] if status in {"confirm", "decline"} else contract["provider_id"]
+            notification_title = {
+                "confirm": "Pedido confirmado",
+                "decline": "Pedido recusado",
+                "cancel": "Contratação cancelada",
+            }[status]
+            notification_body = {
+                "confirm": f"Seu pedido de {contract['service']} foi confirmado.",
+                "decline": f"Seu pedido de {contract['service']} foi recusado.",
+                "cancel": f"O pedido de {contract['service']} foi cancelado.",
+            }[status]
+            self.create_notification(db, recipient_id, contract_id, notification_title, notification_body, int(time.time()))
             row = db.execute(
                 """SELECT contracts.*, listings.category, listings.location, listings.price, listings.about,
                           clients.name AS client_name, clients.profile_photo AS client_photo,

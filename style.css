@@ -157,6 +157,12 @@ h3 { margin-bottom: 6px; font-size: 16px; }
 .time-option:hover { border-color: var(--brand); }
 .time-option.selected { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-dark); font-weight: 700; }
 .booking-summary { margin: 18px 0; padding: 14px; border-radius: 14px; background: var(--surface-soft); color: #53645b; font-size: 13px; }
+.availability-card > p { margin-bottom: 14px; }
+.availability-list, .note-list { margin: 14px 0; display: grid; gap: 8px; }
+.availability-row { min-height: 42px; padding: 7px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 12px; background: var(--surface-soft); font-size: 13px; }
+.availability-form { margin-top: 16px; display: grid; gap: 10px; }
+.contract-note { margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--surface-soft); color: var(--ink) !important; white-space: pre-wrap; overflow-wrap: anywhere; }
+.contract-notes .form-stack { margin-top: 16px; }
 .tabs { padding: 4px; display: inline-flex; gap: 4px; border-radius: 13px; background: #e9eeeb; }
 .tab { min-height: 38px; padding: 0 15px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; }
 .tab.active { background: var(--surface); color: var(--brand); box-shadow: 0 2px 6px rgba(0,0,0,.06); }
@@ -223,8 +229,10 @@ h3 { margin-bottom: 6px; font-size: 16px; }
 .back-link { margin: -5px 0 17px; }
 .listing-actions { flex-wrap: wrap; justify-content: flex-end; }
 .notification-card { padding: 17px; }
+.notification-unread { border-color: #b6d2c7; }
 .notification-card p { margin: 7px 0 13px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .notification-actions { display: flex; gap: 8px; }
+.notification-header-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .rating-stars { display: flex; gap: 5px; }
 .star-button { padding: 3px; border: 0; background: none; color: #cbd1ce; font-size: 32px; }
 .star-button.selected { color: #e9a03c; }
