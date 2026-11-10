@@ -91,6 +91,8 @@ restoreAppState();
 
 const app = document.querySelector("#app");
 const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const weekdayNames = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+const availabilityTimes = Array.from({ length: 17 }, (_, index) => `${String(index + 6).padStart(2, "0")}:00`);
 let toastTimer;
 let chatPollTimer;
 let chatPollBusy = false;
@@ -471,20 +473,15 @@ function drawer() {
       <button class="drawer-link" data-action="${state.userRole === "provider" || state.userRole === "both" ? "my-services" : "offer-service"}"><span>✦</span>${state.userRole === "provider" || state.userRole === "both" ? "Meus serviços" : "Oferecer meus serviços"}</button>
       <button class="drawer-link logout-link" data-action="logout"><span>↪</span>Sair da conta</button>
     </nav>
-    <div class="drawer-footer">AutonoMe · versão 1.6.0</div>
+    <div class="drawer-footer">AutonoMe · versão 1.7.0</div>
   </aside>`;
 }
 
 function homeScreen() {
   return `<section class="hero-card card">
-    <div class="hero-copy"><p class="eyebrow">Sua comunidade, suas conexões</p><h1>O talento do seu bairro está aqui.</h1><p>Encontre profissionais autônomos e combine o serviço ideal para você.</p>${button("Explorar serviços", "categories")}</div>
+    <div class="hero-copy"><p class="eyebrow">Sua comunidade, suas conexões</p><h1>O talento do seu bairro está aqui.</h1><p>Encontre profissionais autônomos e combine o serviço ideal para você.</p></div>
     <div class="hero-art" aria-hidden="true"><img src="logo_autonome.png" alt=""></div>
   </section>
-  <div class="quick-grid">
-    <button class="quick-card" data-action="contracts"><span class="quick-icon">▤</span><span><strong>Meus contratos</strong><span>Acompanhe seus serviços</span></span></button>
-    <button class="quick-card" data-action="messages"><span class="quick-icon">☷</span><span><strong>Mensagens</strong><span>Converse com profissionais</span></span></button>
-    <button class="quick-card" data-action="favorites"><span class="quick-icon">♡</span><span><strong>Favoritos</strong><span>Seus profissionais preferidos</span></span></button>
-  </div>
   <button class="provider-cta card" data-action="offer-service"><span class="provider-cta-icon">✦</span><span class="provider-cta-copy"><strong>${state.userRole === "provider" || state.userRole === "both" ? "Divulgue mais um serviço" : "Trabalhe por conta própria"}</strong><span>Cadastre seus serviços e seja encontrado por clientes do seu bairro.</span></span><span class="category-arrow" aria-hidden="true">↗</span></button>
   ${sectionHeading("Áreas disponíveis", "Escolha a categoria para começar.", `<button class="text-button" data-action="categories">Ver todas ↗</button>`)}
   ${categoryCards()}`;
@@ -495,25 +492,36 @@ function categoriesScreen() {
 }
 
 function listingsScreen() {
+  return `<p class="eyebrow">${esc(state.category)}</p><h1>Encontre um profissional</h1><p class="lead">Escolha um serviço ou explore os profissionais disponíveis na sua região.</p>
+    <div class="search-box"><span aria-hidden="true">⌕</span><input id="provider-search" data-action="search" type="search" placeholder="Buscar serviço ou profissional" value="${esc(state.query)}" aria-label="Buscar serviço ou profissional"></div>
+    <div class="search-results">${listingResultsScreen()}</div>`;
+}
+
+function listingResultsScreen() {
   const category = categories.find((item) => item.name === state.category);
-  const services = [...new Set([...(category?.services || []), ...allListings().filter((item) => item.category === state.category).map((item) => item.service)])];
   const search = normalizedSearch(state.query);
+  const services = [...new Set([...(category?.services || []), ...allListings().filter((item) => item.category === state.category).map((item) => item.service)])]
+    .filter((service) => !search || normalizedSearch(service).includes(search));
   const categoryListings = allListings().filter((provider) => provider.category === state.category);
   const searchMatches = (provider) => !search || normalizedSearch(`${provider.name} ${provider.service} ${provider.about}`).includes(search);
   const previouslyBooked = categoryListings.some((provider) => provider.ownerId !== state.userId && isProviderBooked(provider) && searchMatches(provider));
   const providers = categoryListings.filter((provider) => provider.ownerId !== state.userId
     && !isProviderBooked(provider)
     && searchMatches(provider));
-  return `<p class="eyebrow">${esc(state.category)}</p><h1>Encontre um profissional</h1><p class="lead">Escolha um serviço ou explore os profissionais disponíveis na sua região.</p>
-    <div class="search-box"><span aria-hidden="true">⌕</span><input id="provider-search" data-action="search" type="search" placeholder="Buscar serviço ou profissional" value="${esc(state.query)}" aria-label="Buscar serviço ou profissional"></div>
-    <div class="section-heading"><div><h2>Serviços</h2><p>O que você está procurando?</p></div></div>
-    <div class="category-grid">${services.map((service) => `<button class="category-card" type="button" data-action="select-service" data-service="${esc(service)}"><span class="category-icon">${category?.icon || "✦"}</span><span><h3>${esc(service)}</h3><p>Ver profissionais</p></span><span class="category-arrow">↗</span></button>`).join("")}</div>
+  return `${services.length ? `<div class="section-heading"><div><h2>Serviços</h2><p>O que você está procurando?</p></div></div>
+    <div class="category-grid">${services.map((service) => `<button class="category-card" type="button" data-action="select-service" data-service="${esc(service)}"><span class="category-icon">${category?.icon || "✦"}</span><span><h3>${esc(service)}</h3><p>Ver profissionais</p></span><span class="category-arrow">↗</span></button>`).join("")}</div>` : ""}
     ${providers.length ? sectionHeading("Profissionais da região", `${providers.length} ${providers.length === 1 ? "profissional disponível" : "profissionais disponíveis"} para você conhecer.`) : ""}
-    ${providers.length ? `<div class="listing-list">${providers.map((provider) => providerCard(provider)).join("")}</div>` : `<div class="card empty-state"><div class="empty-icon">⌕</div><h3>${previouslyBooked ? "Este profissional já foi contratado" : "Nenhum profissional encontrado"}</h3><p>${previouslyBooked ? "O perfil volta a aparecer quando a contratação for cancelada. Consulte seu pedido em Contratações." : "Experimente buscar por outro termo ou escolha outro serviço."}</p>${previouslyBooked ? `<button class="button secondary" data-action="contracts">Ver minhas contratações</button>` : ""}</div>`}`;
+    ${providers.length ? `<div class="listing-list">${providers.map((provider) => providerCard(provider)).join("")}</div>` : !services.length ? `<div class="card empty-state"><div class="empty-icon">⌕</div><h3>${previouslyBooked ? "Este profissional já foi contratado" : "Nenhum resultado encontrado"}</h3><p>${previouslyBooked ? "O perfil volta a aparecer quando a contratação for cancelada. Consulte seu pedido em Contratos." : "Experimente buscar por outro termo."}</p>${previouslyBooked ? `<button class="button secondary" data-action="contracts">Ver contratos</button>` : ""}</div>` : ""}`;
 }
 
 function professionalsScreen() {
-  const category = categories.find((item) => item.name === state.category);
+  return `<button class="text-button back-link" type="button" data-action="back-to-services">← Voltar aos serviços</button>
+    <p class="eyebrow">${esc(state.category)}</p><h1>${esc(state.service)}</h1><p class="lead">Profissionais disponíveis para este serviço na sua região.</p>
+    <div class="search-box"><span aria-hidden="true">⌕</span><input id="provider-search" data-action="search" type="search" placeholder="Buscar profissional" value="${esc(state.query)}" aria-label="Buscar profissional"></div>
+    <div class="search-results">${professionalsResultsScreen()}</div>`;
+}
+
+function professionalsResultsScreen() {
   const search = normalizedSearch(state.query);
   const matchingService = (provider) => normalizedSearch(provider.service) === normalizedSearch(state.service);
   const matchingSearch = (provider) => !search || normalizedSearch(`${provider.name} ${provider.service} ${provider.about} ${provider.location}`).includes(search);
@@ -522,10 +530,7 @@ function professionalsScreen() {
   const providers = categoryListings.filter((provider) => provider.ownerId !== state.userId
     && !isProviderBooked(provider)
     && matchingSearch(provider));
-  return `<button class="text-button back-link" type="button" data-action="back-to-services">← Voltar aos serviços</button>
-    <p class="eyebrow">${esc(state.category)}</p><h1>${esc(state.service)}</h1><p class="lead">Profissionais disponíveis para este serviço na sua região.</p>
-    <div class="search-box"><span aria-hidden="true">⌕</span><input id="provider-search" data-action="search" type="search" placeholder="Buscar profissional" value="${esc(state.query)}" aria-label="Buscar profissional"></div>
-    ${providers.length ? `${sectionHeading("Profissionais disponíveis", `${providers.length} ${providers.length === 1 ? "profissional" : "profissionais"} para você conhecer.`)}<div class="listing-list">${providers.map((provider) => providerCard(provider)).join("")}</div>` : `<div class="card empty-state"><div class="empty-icon">⌕</div><h2>${previouslyBooked ? "Profissional temporariamente indisponível" : "Nenhum profissional encontrado"}</h2><p>${previouslyBooked ? "O profissional tem uma contratação ativa e volta a aparecer quando o pedido for cancelado." : "Tente outra busca ou volte aos serviços para escolher uma opção diferente."}</p>${previouslyBooked ? `<button class="button secondary" data-action="contracts">Ver minhas contratações</button>` : ""}</div>`}`;
+  return providers.length ? `${sectionHeading("Profissionais disponíveis", `${providers.length} ${providers.length === 1 ? "profissional" : "profissionais"} para você conhecer.`)}<div class="listing-list">${providers.map((provider) => providerCard(provider)).join("")}</div>` : `<div class="card empty-state"><div class="empty-icon">⌕</div><h2>${previouslyBooked ? "Profissional temporariamente indisponível" : "Nenhum profissional encontrado"}</h2><p>${previouslyBooked ? "O profissional tem uma contratação ativa e volta a aparecer quando o pedido for cancelado." : "Tente outra busca ou volte aos serviços para escolher uma opção diferente."}</p>${previouslyBooked ? `<button class="button secondary" data-action="contracts">Ver contratos</button>` : ""}</div>`;
 }
 
 function profileScreen() {
@@ -567,12 +572,19 @@ function providerSetupScreen() {
 }
 
 function myServicesScreen() {
+  const availabilitySchedule = `<div class="availability-schedule"><div class="availability-schedule-head"><strong>Dia</strong><strong>Toque nos horários para selecionar</strong></div>${weekdayNames.map((day, weekday) => {
+    const savedTimes = state.providerAvailability.filter((slot) => slot.weekday === weekday).map((slot) => slot.time);
+    const times = [...new Set([...availabilityTimes, ...savedTimes])].sort();
+    return `<div class="availability-day-row"><strong class="availability-day-name">${day}</strong><div class="availability-slot-grid">${times.map((time) => {
+      const selected = savedTimes.includes(time);
+      return `<button class="availability-slot ${selected ? "selected" : ""}" type="button" data-action="toggle-availability-time" data-weekday="${weekday}" data-time="${esc(time)}" aria-pressed="${selected}">${esc(time)}</button>`;
+    }).join("")}</div></div>`;
+  }).join("")}</div>`;
   return `<p class="eyebrow">Seu trabalho, sua vitrine</p><h1>Meus serviços</h1><p class="lead">Gerencie os anúncios que os clientes podem encontrar.</p>
     <div class="section-heading"><div><h2>Serviços publicados</h2><p>${state.ownListings.length} ${state.ownListings.length === 1 ? "anúncio" : "anúncios"}</p></div>${button("Adicionar serviço", "offer-service", { small: true })}</div>
     <div class="listing-list">${state.ownListings.length ? state.ownListings.map((listing) => `<article class="listing-card">${avatar(listing.initials, false, listing.profilePhoto)}<div><h3>${esc(listing.service)}</h3><p>${esc(listing.category)} · ${esc(listing.location)}</p><div class="inline-meta"><span>${esc(listing.price)}</span></div></div><span class="listing-actions"><button class="button secondary small" data-action="edit-listing" data-listing="${esc(listing.id)}">Editar</button><button class="button danger small" data-action="delete-listing" data-listing="${esc(listing.id)}">Excluir</button></span></article>`).join("") : `<section class="card empty-state"><div class="empty-icon">✦</div><h2>Você ainda não publicou serviços</h2><p>Cadastre seu primeiro serviço para aparecer para clientes da sua região.</p>${button("Cadastrar serviço", "offer-service")}</section>`}</div>
     <section class="card profile-block availability-card"><h2>Horários de atendimento</h2><p>Os clientes só verão os horários que você disponibilizar.</p>
-      ${state.providerAvailability.length ? `<div class="availability-list">${state.providerAvailability.map((slot, index) => `<div class="availability-row"><span><strong>${weekdays[slot.weekday]}</strong> · ${esc(slot.time)}</span><button class="text-button" type="button" data-action="remove-availability-slot" data-index="${index}" aria-label="Remover ${weekdays[slot.weekday]} às ${esc(slot.time)}">Remover</button></div>`).join("")}</div>` : `<p class="field-note">Nenhum horário cadastrado. Configure sua disponibilidade para receber pedidos de contratação.</p>`}
-      <form class="availability-form" data-form="availability"><div class="two-col"><div class="field"><label for="availability-day">Dia da semana</label><select id="availability-day" name="weekday">${weekdays.map((day, index) => `<option value="${index}">${["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][index]}</option>`).join("")}</select></div><div class="field"><label for="availability-time">Horário</label><input id="availability-time" name="time" type="time" step="900" required></div></div><button class="button secondary" type="button" data-action="add-availability-slot">Adicionar horário</button><button class="button" type="submit">Salvar disponibilidade</button></form>
+      <form class="availability-form" data-form="availability">${availabilitySchedule}<button class="button" type="submit">Salvar disponibilidade</button></form>
     </section>`;
 }
 
@@ -682,7 +694,7 @@ function settingsScreen() {
     <section class="card profile-block"><h3>Como você quer usar o app?</h3><p>Você pode alterar esse perfil quando quiser.</p>${roleOptions(state.userRole)}</section>
     <section class="card profile-block"><h3>Preferências</h3>${Object.entries(state.settings).map(([name, enabled]) => `<div class="switch-row"><div class="switch-copy"><strong>${esc(name)}</strong><span>${name === "Modo Escuro" ? "Ajuste a aparência do aplicativo." : name === "Notificações" ? "Receba novidades sobre seus serviços." : `Controle o acesso do app a ${name.replace("Permitir ", "").toLowerCase()}.`}</span></div><button class="switch" type="button" role="switch" aria-checked="${enabled}" aria-label="${esc(name)}" data-action="toggle-setting" data-setting="${esc(name)}"></button></div>`).join("")}</section>
     <section class="card profile-block danger-zone"><h3>Desativar conta</h3><p>Sua conta será movida para a lista segura de usuários desativados. Você precisará confirmar a ação com um código enviado ao e-mail cadastrado.</p>${button("Solicitar desativação", "delete-account", { variant: "danger" })}</section>
-    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.6.0</p></section>`;
+    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.7.0</p></section>`;
 }
 
 function favoritesScreen() {
@@ -789,7 +801,6 @@ app.addEventListener("change", async (event) => {
     try {
       await apiRequest("/api/auth/role", { method: "POST", body: JSON.stringify({ role: event.target.value }) });
       state.userRole = event.target.value;
-      if (state.userRole !== "client" && !state.ownListings.length) state.view = "provider-setup";
       render();
       showToast("Perfil atualizado. Agora você pode publicar seus serviços.");
     } catch (error) {
@@ -905,13 +916,9 @@ app.addEventListener("input", (event) => {
     return;
   }
   if (event.target.matches("#provider-search")) {
-    const cursor = event.target.selectionStart;
     state.query = event.target.value;
-    const listings = document.querySelector(".content");
-    listings.innerHTML = state.view === "professionals" ? professionalsScreen() : listingsScreen();
-    const search = document.querySelector("#provider-search");
-    search?.focus();
-    search?.setSelectionRange(cursor, cursor);
+    const results = document.querySelector(".search-results");
+    if (results) results.innerHTML = state.view === "professionals" ? professionalsResultsScreen() : listingResultsScreen();
   }
 });
 
@@ -921,6 +928,7 @@ app.addEventListener("click", async (event) => {
   const { action } = target.dataset;
   switch (action) {
     case "auth-home": break;
+    case "search": return;
     case "toggle-auth":
       state.authMode = state.authMode === "login" ? "register" : "login";
       break;
@@ -1289,6 +1297,22 @@ app.addEventListener("click", async (event) => {
     case "remove-availability-slot":
       state.providerAvailability.splice(Number(target.dataset.index), 1);
       break;
+    case "toggle-availability-time": {
+      const weekday = Number(target.dataset.weekday);
+      const time = target.dataset.time;
+      const index = state.providerAvailability.findIndex((slot) => slot.weekday === weekday && slot.time === time);
+      if (index >= 0) {
+        state.providerAvailability.splice(index, 1);
+        target.classList.remove("selected");
+        target.setAttribute("aria-pressed", "false");
+      } else {
+        state.providerAvailability.push({ weekday, time });
+        state.providerAvailability.sort((a, b) => a.weekday - b.weekday || a.time.localeCompare(b.time));
+        target.classList.add("selected");
+        target.setAttribute("aria-pressed", "true");
+      }
+      return;
+    }
     case "settings":
       state.view = "settings";
       state.drawerOpen = false;
@@ -1385,13 +1409,13 @@ app.addEventListener("submit", async (event) => {
           body: JSON.stringify({ email: data.get("email"), password: data.get("password") }),
         });
         setAuthenticatedUser(result.user);
-        state.view = state.userRole !== "client" ? "provider-setup" : "home";
+        state.view = "home";
         try {
           await refreshRemoteData(true);
         } catch (error) {
           showToast(error.message);
         }
-        state.view = state.userRole !== "client" && !state.ownListings.length ? "provider-setup" : "home";
+        state.view = "home";
       } catch (error) {
         showToast(error.message);
         return;
@@ -1406,13 +1430,13 @@ app.addEventListener("submit", async (event) => {
             body: JSON.stringify({ email: state.pendingEmail, code: data.get("code") }),
           });
           setAuthenticatedUser(result.user);
-          state.view = state.userRole !== "client" ? "provider-setup" : "home";
+          state.view = "home";
           try {
             await refreshRemoteData();
           } catch (error) {
             showToast(error.message);
           }
-          state.view = state.userRole !== "client" ? "provider-setup" : "home";
+          state.view = "home";
         } else {
           await apiRequest("/api/auth/deactivate/verify", {
             method: "POST",

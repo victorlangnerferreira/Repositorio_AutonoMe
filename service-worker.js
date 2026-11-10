@@ -1,9 +1,9 @@
-const CACHE_NAME = "autonome-shell-v14";
+const CACHE_NAME = "autonome-shell-v15";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=1.6.0",
-  "./app.js?v=1.6.0",
+  "./style.css?v=1.7.0",
+  "./app.js?v=1.7.0",
   "./manifest.webmanifest",
   "./icon.svg",
   "./logo_autonome.png",
