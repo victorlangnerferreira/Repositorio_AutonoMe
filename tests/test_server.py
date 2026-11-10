@@ -6,7 +6,7 @@ import tempfile
 import threading
 import unittest
 from datetime import date, timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import server
@@ -32,10 +32,36 @@ class EmailDeliveryTests(unittest.TestCase):
         urlopen.assert_called_once_with(request, timeout=15)
 
 
+class PostgresConnectionTests(unittest.TestCase):
+    def test_execute_translates_sqlite_placeholders_for_postgres(self):
+        connection = Mock()
+        cursor = object()
+        connection.execute.return_value = cursor
+        db = server.PostgresConnection(connection)
+
+        result = db.execute("SELECT * FROM users WHERE email = ? AND role = ?", ("a@example.com", "both"))
+
+        self.assertIs(result, cursor)
+        connection.execute.assert_called_once_with(
+            "SELECT * FROM users WHERE email = %s AND role = %s",
+            ("a@example.com", "both"),
+        )
+
+    def test_executescript_runs_postgres_ddl_as_individual_statements(self):
+        connection = Mock()
+        db = server.PostgresConnection(connection)
+
+        db.executescript("CREATE TABLE users (id TEXT); CREATE INDEX users_id ON users(id);")
+
+        self.assertEqual(connection.execute.call_count, 2)
+
+
 class AccountAPITests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         server.DATABASE = Path(self.temp_dir.name) / "autonome-test.sqlite3"
+        self.original_database_url = server.DATABASE_URL
+        server.DATABASE_URL = None
         server.APP_SECRET = "test-secret-for-autonome"
         server.init_db()
         self.sent_codes = []
@@ -46,9 +72,11 @@ class AccountAPITests(unittest.TestCase):
         self.thread.start()
         self.host, self.port = self.httpd.server_address
         self.cookie = ""
+        self.last_set_cookie = ""
 
     def tearDown(self):
         server.send_verification_email = self.original_sender
+        server.DATABASE_URL = self.original_database_url
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=3)
@@ -74,6 +102,7 @@ class AccountAPITests(unittest.TestCase):
         connection.close()
         for name, value in response_headers:
             if name.lower() == "set-cookie":
+                self.last_set_cookie = value
                 self.cookie = value.split(";", 1)[0]
         return response.status, result
 
@@ -327,7 +356,12 @@ class AccountAPITests(unittest.TestCase):
         self.assertEqual(status, 404, response)
 
     def test_registration_requires_email_code_and_creates_authenticated_user(self):
-        payload = self.register()
+        with patch.dict(os.environ, {"COOKIE_SECURE": "true"}):
+            payload = self.register()
+        self.assertIn(f"Max-Age={server.SESSION_LIFETIME_SECONDS}", self.last_set_cookie)
+        self.assertIn("HttpOnly", self.last_set_cookie)
+        self.assertIn("SameSite=Strict", self.last_set_cookie)
+        self.assertIn("Secure", self.last_set_cookie)
         status, response = self.request("GET", "/api/auth/me")
         self.assertEqual(status, 200)
         self.assertEqual(response["user"]["email"], payload["email"])
@@ -337,6 +371,27 @@ class AccountAPITests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM email_verifications").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users WHERE email = ?", (payload["email"],)).fetchone()[0], 1)
             self.assertNotIn("52998224725", json.dumps(dict(db.execute("SELECT * FROM users").fetchone())))
+
+    def test_logout_keeps_account_and_allows_login_again(self):
+        payload = self.register()
+        status, _ = self.request("POST", "/api/auth/logout", {})
+        self.assertEqual(status, 200)
+        self.assertIn("Max-Age=0", self.last_set_cookie)
+
+        status, response = self.request("GET", "/api/auth/me")
+        self.assertEqual(status, 200)
+        self.assertIsNone(response["user"])
+        with server.database() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 1)
+
+        status, _ = self.request("POST", "/api/auth/login", {
+            "email": payload["email"],
+            "password": payload["password"],
+        })
+        self.assertEqual(status, 200)
+        status, response = self.request("GET", "/api/auth/me")
+        self.assertEqual(status, 200)
+        self.assertEqual(response["user"]["email"], payload["email"])
 
     def test_wrong_code_is_counted_and_email_delivery_failure_does_not_create_challenge(self):
         payload = {
@@ -573,6 +628,19 @@ class AccountAPITests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.cookie = customer_cookie
         self.assertEqual(self.request("GET", "/api/availability")[1]["availability"], [])
+
+    def test_availability_accepts_and_persists_every_slot_in_the_weekly_grid(self):
+        self.register_account("agenda@example.com", "Agenda", "provider")
+        slots = [
+            {"weekday": weekday, "time": f"{hour:02d}:00"}
+            for weekday in range(7)
+            for hour in range(6, 23)
+        ]
+
+        status, response = self.request("POST", "/api/availability", {"availability": slots})
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["availability"], slots)
+        self.assertEqual(self.request("GET", "/api/availability")[1]["availability"], slots)
 
     def test_contract_notes_are_private_to_the_author_and_only_available_to_participants(self):
         self.register_account("profissional@example.com", "Profissional", "both")
