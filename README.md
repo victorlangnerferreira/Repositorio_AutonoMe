@@ -38,39 +38,22 @@ gradle -p android assembleDebug "-PautonomeAppUrl=https://SEU-DOMINIO/"
 
 O projeto Android requer JDK 17, Android SDK 34 e Gradle 8.7. O APK conectado será criado em `android/app/build/outputs/apk/debug/app-debug.apk` e abrirá o endereço informado dentro do app. Não compartilhe o APK até substituir `https://SEU-DOMINIO/` por um domínio HTTPS ativo. O endereço é validado no build; URLs HTTP não são aceitas. Sem `autonomeAppUrl`, a interface local continua disponível para pré-visualização, mas cadastro, login, verificação por e-mail e desativação informam que o servidor precisa ser conectado.
 
-## Publicar no Render
+## Publicar no Render com recursos gratuitos
 
-O serviço Free do Render é apenas para testes: depois de 15 minutos sem uso ele desliga e apaga arquivos locais, incluindo o banco SQLite. Isso explica por que uma conta pode desaparecer depois de fechar o app: fechar o app não apaga a conta, mas a hospedagem gratuita elimina o banco quando a instância dorme ou reinicia. O Free não permite disco persistente. O Postgres Free do Render também expira após 30 dias, portanto não serve como armazenamento definitivo.
+O `render.yaml` mantém o servidor no plano Free do Render. Esse plano não tem disco persistente: qualquer banco SQLite gravado localmente pode ser apagado quando o serviço dorme após 15 minutos sem tráfego, reinicia ou recebe um novo deploy. Por isso, fechar o app não exclui a conta, mas o armazenamento local do servidor gratuito pode desaparecer. O PostgreSQL Free oferecido pelo próprio Render também expira após 30 dias.
 
-O `render.yaml` agora configura o menor compute pago (`0.5c-512mb`) e um disco persistente de 1 GB em `/app/data`; o servidor grava o banco em `/app/data/autonome.sqlite3`. Isso mantém contas, perfis, serviços, contratos e conversas entre reinicializações e deploys. Sincronizar essa alteração no Render faz upgrade para um serviço pago e adiciona o custo mensal do disco; consulte os valores atuais em [Render Pricing](https://render.com/pricing#compute) e [Persistent Disks](https://render.com/docs/disks). **Não sincronize o Blueprint se não quiser contratar o plano pago.** O disco tem snapshots automáticos diários, mantidos por sete dias.
+Para manter os dados usando apenas recursos gratuitos, o servidor aceita PostgreSQL externo pela variável `DATABASE_URL`; uma opção é o plano Free permanente do [Neon](https://neon.com/pricing), que inclui até 1 GB por projeto e suspende o compute após inatividade. Ele tem limites de uso e pode demorar alguns instantes para acordar. Sem `DATABASE_URL`, o servidor usa SQLite local e os dados continuam sujeitos à perda no Render Free.
 
-Antes de sincronizar o Blueprint, faça backup dos dados que ainda estiverem disponíveis no serviço Free: o primeiro deploy com o disco inicia `/app/data` vazio, e o banco temporário atual não é migrado automaticamente pelo Render. Esta versão não contém uma ferramenta de exportação/migração do SQLite remoto. Contas já apagadas quando a instância Free dormiu não podem ser recuperadas pelo app; se o banco atual ainda não estiver acessível, será necessário cadastrar novamente uma vez depois que o disco persistente estiver ativo. Após a migração, os novos cadastros ficarão no disco.
+1. No [Neon Console](https://console.neon.tech/), crie um projeto gratuito. Em **Connect**, selecione a branch, o banco, o usuário e a conexão agrupada (*pooled*); copie a string de conexão `DATABASE_URL`.
+2. No [Render Dashboard](https://dashboard.render.com), abra o serviço **autonome → Environment → Edit** e adicione `DATABASE_URL` com a string do Neon. O valor contém senha: preencha-o somente no painel do Render, nunca no chat ou no GitHub.
+3. Faça o deploy da branch que contém este `render.yaml`. O compute continua `free` e nenhum disco pago é criado. Quando `DATABASE_URL` estiver presente, o servidor cria as tabelas no PostgreSQL; sem essa variável, ele inicia em SQLite local.
+4. Configure também `APP_ENV=production`, `COOKIE_SECURE=true` e um `APP_SECRET` aleatório e estável de pelo menos 32 caracteres. O Blueprint gera `APP_SECRET` automaticamente.
+5. Para cadastro por e-mail, configure `BREVO_API_KEY` e `EMAIL_FROM` no mesmo painel. No [Brevo](https://www.brevo.com/), crie uma API key e verifique um remetente em **Settings → Senders**. Remetentes de domínios gratuitos, como Gmail, podem ter menor entregabilidade.
+6. Gere um domínio HTTPS em **Settings → Networking → Generate Domain**, aguarde o deploy ficar saudável e teste o acesso pelo celular. O APK deve apontar para esse domínio para autenticar no mesmo servidor.
 
-O backend envia e-mails pela API HTTPS do Brevo, que não depende de SMTP. Para ativar a configuração:
+As tabelas do Neon começam vazias; o Render não copia automaticamente o SQLite existente para a nova base. Esta versão não contém ferramenta para exportar o banco remoto atual, e contas já apagadas quando o serviço dormiu não podem ser recuperadas. Se o banco atual ainda estiver disponível e contiver dados importantes, não faça novo deploy antes de decidir como preservá-los. Depois de conectar o Neon, talvez seja necessário criar a conta novamente uma vez.
 
-1. Envie este repositório para o GitHub e confirme que a branch a publicar contém `Dockerfile` e `render.yaml`.
-2. Crie ou entre na sua conta em [dashboard.render.com](https://dashboard.render.com), escolha **New → Blueprint**, conecte o GitHub e selecione o repositório/branch.
-3. Revise e sincronize o Blueprint `render.yaml`. Ele altera o compute para o plano pago, adiciona o disco de 1 GB e gera `APP_SECRET` automaticamente. A alteração pode gerar cobranças mensais.
-4. No painel do serviço, abra **Environment → Edit** e configure o remetente do Brevo. O Blueprint deixa o segredo para preenchimento privado e oferece estas variáveis:
-
-   | Variável | Valor |
-   | --- | --- |
-   | `APP_ENV` | `production` |
-   | `APP_SECRET` | chave aleatória privada com pelo menos 32 caracteres |
-   | `COOKIE_SECURE` | `true` |
-   | `AUTONOME_DB_PATH` | `/app/data/autonome.sqlite3` |
-   | `BREVO_API_KEY` | chave API criada no painel do Brevo (secreta) |
-   | `EMAIL_FROM` | endereço verificado na área de remetentes do Brevo |
-   | `EMAIL_FROM_NAME` | nome apresentado ao destinatário (opcional; padrão `AutonoMe`) |
-
-   No [Brevo](https://www.brevo.com/), crie a conta e uma [API key](https://developers.brevo.com/docs/api-key-authentication). Adicione um remetente em [Settings → Senders](https://app.brevo.com/senders). Para testar, o Brevo pode verificar um endereço individual enviando um código para essa caixa de entrada. Autenticar um domínio próprio com os registros DNS do Brevo é recomendado para melhor entregabilidade; remetentes de domínios gratuitos como Gmail podem receber avisos e ter menor entregabilidade.
-
-   As variáveis SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `SMTP_FROM`) são opcionais e servem como alternativa em hospedagens que permitem conexões SMTP de saída. O plano Free do Render bloqueia SMTP.
-
-5. Gere um domínio público HTTPS em **Settings → Networking → Generate Domain**. Espere o deploy ficar saudável, abra esse endereço no celular e teste o envio de código por e-mail. Acompanhe o status do serviço e confirme que o disco está montado em `/app/data`.
-6. Gere o APK com o endereço HTTPS do domínio Render usando o comando da seção anterior. O app e o backend ficam no mesmo domínio, necessário para que o cookie de sessão funcione corretamente.
-
-Nunca envie `APP_SECRET`, chave do Brevo, senha SMTP ou códigos de verificação pelo chat; `APP_SECRET` é gerado pelo Render e os segredos devem ser preenchidos apenas no painel **Environment** do serviço. O APK atual não ganha conectividade retroativamente: é necessário gerar e instalar outro APK depois de ter o domínio publicado.
+O Free do Render continua tendo inicialização lenta após períodos sem uso e limites mensais; o Neon Free também tem cotas e escala para zero. Consulte os limites atuais nas páginas de [Render Free](https://render.com/docs/free) e [Neon Pricing](https://neon.com/pricing). A conexão SMTP de saída é bloqueada no plano Free do Render; use a API HTTPS do Brevo. Nunca envie `DATABASE_URL`, `APP_SECRET`, chave do Brevo, senha SMTP ou códigos de verificação pelo chat.
 
 ### Configurar envio com Gmail em hospedagem compatível com SMTP
 
@@ -98,4 +81,4 @@ O envio por `smtp.gmail.com:587` **não funciona no plano Free do Render**, mesm
 - Identidade visual e ícones PWA/Android atualizados com o logo enviado
 - Favoritos, configurações, avaliação e formulários de contato e ajuda
 
-Perfis, fotos, anúncios, pedidos, mensagens, disponibilidade, favoritos, notificações e anotações ficam no banco SQLite do backend; preferências de aparência e permissões continuam locais ao dispositivo. No Render, configure e ative o disco persistente descrito acima antes de usar contas reais; SQLite em armazenamento efêmero perde os dados quando o serviço Free dorme ou reinicia. O chat e as anotações só estão disponíveis às duas contas relacionadas a uma contratação; as anotações de cada pessoa são privadas. Mensagens diretas fora de contratações e compartilhamento público de telefone/e-mail não estão disponíveis. A validação do CPF verifica formato e dígitos, mas não consulta situação cadastral na Receita Federal. O CPF não é armazenado. Não há perfis fictícios no catálogo. A versão web pode ser instalada como PWA pelo menu do navegador; o projeto também gera APKs Android de teste com WebView, ainda não publicado na Google Play.
+Perfis, fotos, anúncios, pedidos, mensagens, disponibilidade, favoritos, notificações e anotações ficam no PostgreSQL quando `DATABASE_URL` está configurada; sem ela, o backend usa SQLite local. Preferências de aparência e permissões continuam locais ao dispositivo. No Render Free, configure uma base PostgreSQL externa para evitar que o banco local desapareça ao dormir ou reiniciar. O chat e as anotações só estão disponíveis às duas contas relacionadas a uma contratação; as anotações de cada pessoa são privadas. Mensagens diretas fora de contratações e compartilhamento público de telefone/e-mail não estão disponíveis. A validação do CPF verifica formato e dígitos, mas não consulta situação cadastral na Receita Federal. O CPF não é armazenado. Não há perfis fictícios no catálogo. A versão web pode ser instalada como PWA pelo menu do navegador; o projeto também gera APKs Android de teste com WebView, ainda não publicado na Google Play.

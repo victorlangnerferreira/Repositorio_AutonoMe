@@ -6,7 +6,7 @@ import tempfile
 import threading
 import unittest
 from datetime import date, timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import server
@@ -32,10 +32,36 @@ class EmailDeliveryTests(unittest.TestCase):
         urlopen.assert_called_once_with(request, timeout=15)
 
 
+class PostgresConnectionTests(unittest.TestCase):
+    def test_execute_translates_sqlite_placeholders_for_postgres(self):
+        connection = Mock()
+        cursor = object()
+        connection.execute.return_value = cursor
+        db = server.PostgresConnection(connection)
+
+        result = db.execute("SELECT * FROM users WHERE email = ? AND role = ?", ("a@example.com", "both"))
+
+        self.assertIs(result, cursor)
+        connection.execute.assert_called_once_with(
+            "SELECT * FROM users WHERE email = %s AND role = %s",
+            ("a@example.com", "both"),
+        )
+
+    def test_executescript_runs_postgres_ddl_as_individual_statements(self):
+        connection = Mock()
+        db = server.PostgresConnection(connection)
+
+        db.executescript("CREATE TABLE users (id TEXT); CREATE INDEX users_id ON users(id);")
+
+        self.assertEqual(connection.execute.call_count, 2)
+
+
 class AccountAPITests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         server.DATABASE = Path(self.temp_dir.name) / "autonome-test.sqlite3"
+        self.original_database_url = server.DATABASE_URL
+        server.DATABASE_URL = None
         server.APP_SECRET = "test-secret-for-autonome"
         server.init_db()
         self.sent_codes = []
@@ -50,6 +76,7 @@ class AccountAPITests(unittest.TestCase):
 
     def tearDown(self):
         server.send_verification_email = self.original_sender
+        server.DATABASE_URL = self.original_database_url
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=3)

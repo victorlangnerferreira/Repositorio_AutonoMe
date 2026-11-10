@@ -22,9 +22,21 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:
+    psycopg = None
+    dict_row = None
+
+
+DATABASE_INTEGRITY_ERRORS = (sqlite3.IntegrityError,) + (
+    (psycopg.IntegrityError,) if psycopg is not None else ()
+)
 
 ROOT = Path(__file__).resolve().parent
 DATABASE = Path(os.environ.get("AUTONOME_DB_PATH", ROOT / "data" / "autonome.sqlite3"))
+DATABASE_URL = os.environ.get("DATABASE_URL")
 APP_ENV = os.environ.get("APP_ENV", "development")
 APP_SECRET = os.environ.get("APP_SECRET")
 if APP_ENV == "production" and not APP_SECRET:
@@ -63,7 +75,35 @@ class APIError(Exception):
         self.status = status
 
 
+class PostgresConnection:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, statement, parameters=()):
+        return self.connection.execute(statement.replace("?", "%s"), parameters)
+
+    def executescript(self, script):
+        for statement in script.split(";"):
+            if statement.strip():
+                self.execute(statement)
+
+    def close(self):
+        self.connection.close()
+
+    def __enter__(self):
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback_value):
+        return self.connection.__exit__(exc_type, exc_value, traceback_value)
+
+
 def connect_db():
+    if DATABASE_URL:
+        if psycopg is None:
+            raise RuntimeError("DATABASE_URL requires psycopg. Install the project requirements.")
+        return PostgresConnection(psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10))
+
     DATABASE.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DATABASE)
     connection.row_factory = sqlite3.Row
@@ -81,10 +121,27 @@ def database():
         connection.close()
 
 
+def table_columns(db, table_name):
+    if DATABASE_URL:
+        return {
+            row["column_name"]
+            for row in db.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                (table_name,),
+            )
+        }
+    return {row["name"] for row in db.execute(f"PRAGMA table_info({table_name})")}
+
+
 def init_db():
+    if APP_ENV == "production" and not DATABASE_URL:
+        print(
+            "Warning: DATABASE_URL is unset; Render Free SQLite storage is ephemeral and may be lost.",
+            file=sys.stderr,
+        )
     with database() as db:
-        db.executescript(
-            """
+        schema = """
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -205,8 +262,10 @@ def init_db():
                 ON contracts(listing_id)
                 WHERE listing_id IS NOT NULL AND state IN ('Aguardando confirmação', 'Confirmado');
             """
-        )
-        contract_columns = {row["name"] for row in db.execute("PRAGMA table_info(contracts)")}
+        if DATABASE_URL:
+            schema = schema.replace(" COLLATE NOCASE", "")
+        db.executescript(schema)
+        contract_columns = table_columns(db, "contracts")
         if "details" not in contract_columns:
             db.execute("ALTER TABLE contracts ADD COLUMN details TEXT NOT NULL DEFAULT ''")
         for column, definition in (
@@ -222,7 +281,7 @@ def init_db():
                WHERE service_date IS NOT NULL AND service_time IS NOT NULL
                  AND state IN ('Aguardando confirmação', 'Confirmado')"""
         )
-        user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+        user_columns = table_columns(db, "users")
         for column in ("profile_bio", "profile_location", "profile_photo"):
             if column not in user_columns:
                 db.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
@@ -828,7 +887,8 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
             if listing["user_id"] == user["id"]:
                 raise APIError(HTTPStatus.BAD_REQUEST, "Você não pode salvar seu próprio serviço.")
             db.execute(
-                "INSERT OR IGNORE INTO favorites (user_id, listing_id, created_at) VALUES (?, ?, ?)",
+                """INSERT INTO favorites (user_id, listing_id, created_at) VALUES (?, ?, ?)
+                   ON CONFLICT (user_id, listing_id) DO NOTHING""",
                 (user["id"], listing_id, int(time.time())),
             )
         return HTTPStatus.CREATED, {"message": "Profissional salvo nos favoritos."}, []
@@ -1200,10 +1260,11 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
                     f"{client['name']} solicitou {listing['service']} para {date_label}.",
                     now,
                 )
-            except sqlite3.IntegrityError as error:
-                if "contracts.listing_id" in str(error):
+            except DATABASE_INTEGRITY_ERRORS as error:
+                constraint_name = getattr(getattr(error, "diag", None), "constraint_name", "")
+                if "contracts_one_active_per_listing" in constraint_name or "contracts.listing_id" in str(error):
                     raise APIError(HTTPStatus.CONFLICT, "Este profissional já recebeu um pedido ativo para este serviço.") from error
-                if "contracts.provider_id" in str(error):
+                if "contracts_one_active_per_provider_slot" in constraint_name or "contracts.provider_id" in str(error):
                     raise APIError(HTTPStatus.CONFLICT, "Este horário acabou de ser reservado. Escolha outro.") from error
                 raise
             row = db.execute(
