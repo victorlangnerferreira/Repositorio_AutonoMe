@@ -46,6 +46,7 @@ class AccountAPITests(unittest.TestCase):
         self.thread.start()
         self.host, self.port = self.httpd.server_address
         self.cookie = ""
+        self.last_set_cookie = ""
 
     def tearDown(self):
         server.send_verification_email = self.original_sender
@@ -74,6 +75,7 @@ class AccountAPITests(unittest.TestCase):
         connection.close()
         for name, value in response_headers:
             if name.lower() == "set-cookie":
+                self.last_set_cookie = value
                 self.cookie = value.split(";", 1)[0]
         return response.status, result
 
@@ -327,7 +329,12 @@ class AccountAPITests(unittest.TestCase):
         self.assertEqual(status, 404, response)
 
     def test_registration_requires_email_code_and_creates_authenticated_user(self):
-        payload = self.register()
+        with patch.dict(os.environ, {"COOKIE_SECURE": "true"}):
+            payload = self.register()
+        self.assertIn(f"Max-Age={server.SESSION_LIFETIME_SECONDS}", self.last_set_cookie)
+        self.assertIn("HttpOnly", self.last_set_cookie)
+        self.assertIn("SameSite=Strict", self.last_set_cookie)
+        self.assertIn("Secure", self.last_set_cookie)
         status, response = self.request("GET", "/api/auth/me")
         self.assertEqual(status, 200)
         self.assertEqual(response["user"]["email"], payload["email"])
@@ -337,6 +344,27 @@ class AccountAPITests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM email_verifications").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users WHERE email = ?", (payload["email"],)).fetchone()[0], 1)
             self.assertNotIn("52998224725", json.dumps(dict(db.execute("SELECT * FROM users").fetchone())))
+
+    def test_logout_keeps_account_and_allows_login_again(self):
+        payload = self.register()
+        status, _ = self.request("POST", "/api/auth/logout", {})
+        self.assertEqual(status, 200)
+        self.assertIn("Max-Age=0", self.last_set_cookie)
+
+        status, response = self.request("GET", "/api/auth/me")
+        self.assertEqual(status, 200)
+        self.assertIsNone(response["user"])
+        with server.database() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 1)
+
+        status, _ = self.request("POST", "/api/auth/login", {
+            "email": payload["email"],
+            "password": payload["password"],
+        })
+        self.assertEqual(status, 200)
+        status, response = self.request("GET", "/api/auth/me")
+        self.assertEqual(status, 200)
+        self.assertEqual(response["user"]["email"], payload["email"])
 
     def test_wrong_code_is_counted_and_email_delivery_failure_does_not_create_challenge(self):
         payload = {

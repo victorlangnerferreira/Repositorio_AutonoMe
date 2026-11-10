@@ -400,7 +400,7 @@ function authScreen() {
   return `<main class="auth-wrap">
     <section class="auth-aside">
       <div class="auth-brand-row"><div class="brand-lockup" data-action="auth-home"><img class="brand-mark" src="logo_autonome.png" alt=""><span class="brand-name">AutonoMe</span></div></div>
-      <div class="auth-message"><h1>Serviços perto.<br>Conexões de verdade.</h1><p>Encontre profissionais autônomos no seu bairro e combine serviços do seu jeito.</p><div class="auth-art" aria-hidden="true">A</div></div>
+      <div class="auth-message"><h1>Serviços perto.<br>Conexões reais.</h1><p>Encontre profissionais autônomos no seu bairro e combine serviços do seu jeito.</p><div class="auth-art" aria-hidden="true"><img src="logo_autonome.png" alt=""></div></div>
       <div class="auth-footer">Uma comunidade que valoriza quem faz acontecer.</div>
     </section>
     <section class="auth-panel">
@@ -471,14 +471,14 @@ function drawer() {
       <button class="drawer-link" data-action="${state.userRole === "provider" || state.userRole === "both" ? "my-services" : "offer-service"}"><span>✦</span>${state.userRole === "provider" || state.userRole === "both" ? "Meus serviços" : "Oferecer meus serviços"}</button>
       <button class="drawer-link logout-link" data-action="logout"><span>↪</span>Sair da conta</button>
     </nav>
-    <div class="drawer-footer">AutonoMe · versão 1.5.1</div>
+    <div class="drawer-footer">AutonoMe · versão 1.6.0</div>
   </aside>`;
 }
 
 function homeScreen() {
   return `<section class="hero-card card">
     <div class="hero-copy"><p class="eyebrow">Sua comunidade, suas conexões</p><h1>O talento do seu bairro está aqui.</h1><p>Encontre profissionais autônomos e combine o serviço ideal para você.</p>${button("Explorar serviços", "categories")}</div>
-    <div class="hero-art" aria-hidden="true">✦</div>
+    <div class="hero-art" aria-hidden="true"><img src="logo_autonome.png" alt=""></div>
   </section>
   <div class="quick-grid">
     <button class="quick-card" data-action="contracts"><span class="quick-icon">▤</span><span><strong>Meus contratos</strong><span>Acompanhe seus serviços</span></span></button>
@@ -682,7 +682,7 @@ function settingsScreen() {
     <section class="card profile-block"><h3>Como você quer usar o app?</h3><p>Você pode alterar esse perfil quando quiser.</p>${roleOptions(state.userRole)}</section>
     <section class="card profile-block"><h3>Preferências</h3>${Object.entries(state.settings).map(([name, enabled]) => `<div class="switch-row"><div class="switch-copy"><strong>${esc(name)}</strong><span>${name === "Modo Escuro" ? "Ajuste a aparência do aplicativo." : name === "Notificações" ? "Receba novidades sobre seus serviços." : `Controle o acesso do app a ${name.replace("Permitir ", "").toLowerCase()}.`}</span></div><button class="switch" type="button" role="switch" aria-checked="${enabled}" aria-label="${esc(name)}" data-action="toggle-setting" data-setting="${esc(name)}"></button></div>`).join("")}</section>
     <section class="card profile-block danger-zone"><h3>Desativar conta</h3><p>Sua conta será movida para a lista segura de usuários desativados. Você precisará confirmar a ação com um código enviado ao e-mail cadastrado.</p>${button("Solicitar desativação", "delete-account", { variant: "danger" })}</section>
-    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.5.1</p></section>`;
+    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.6.0</p></section>`;
 }
 
 function favoritesScreen() {

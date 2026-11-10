@@ -40,11 +40,17 @@ O projeto Android requer JDK 17, Android SDK 34 e Gradle 8.7. O APK conectado se
 
 ## Publicar no Render
 
-Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **testes iniciais**, sem cobrança automática de compute. Neste plano o servidor pode dormir após 15 minutos sem uso, o banco SQLite fica em armazenamento temporário e conexões SMTP de saída são bloqueadas. O backend agora envia e-mails pela API HTTPS do Brevo, que não depende de SMTP. Não use esta configuração para dados importantes. Para preservar contas será necessário migrar para um plano que aceite disco persistente, montar o disco em `/data` e definir `AUTONOME_DB_PATH=/data/autonome.sqlite3`; serviços pagos podem gerar cobranças. Para publicar:
+O serviço Free do Render é apenas para testes: depois de 15 minutos sem uso ele desliga e apaga arquivos locais, incluindo o banco SQLite. Isso explica por que uma conta pode desaparecer depois de fechar o app: fechar o app não apaga a conta, mas a hospedagem gratuita elimina o banco quando a instância dorme ou reinicia. O Free não permite disco persistente. O Postgres Free do Render também expira após 30 dias, portanto não serve como armazenamento definitivo.
+
+O `render.yaml` agora configura o menor compute pago (`0.5c-512mb`) e um disco persistente de 1 GB em `/app/data`; o servidor grava o banco em `/app/data/autonome.sqlite3`. Isso mantém contas, perfis, serviços, contratos e conversas entre reinicializações e deploys. Sincronizar essa alteração no Render faz upgrade para um serviço pago e adiciona o custo mensal do disco; consulte os valores atuais em [Render Pricing](https://render.com/pricing#compute) e [Persistent Disks](https://render.com/docs/disks). **Não sincronize o Blueprint se não quiser contratar o plano pago.** O disco tem snapshots automáticos diários, mantidos por sete dias.
+
+Antes de sincronizar o Blueprint, faça backup dos dados que ainda estiverem disponíveis no serviço Free: o primeiro deploy com o disco inicia `/app/data` vazio, e o banco temporário atual não é migrado automaticamente pelo Render. Esta versão não contém uma ferramenta de exportação/migração do SQLite remoto. Contas já apagadas quando a instância Free dormiu não podem ser recuperadas pelo app; se o banco atual ainda não estiver acessível, será necessário cadastrar novamente uma vez depois que o disco persistente estiver ativo. Após a migração, os novos cadastros ficarão no disco.
+
+O backend envia e-mails pela API HTTPS do Brevo, que não depende de SMTP. Para ativar a configuração:
 
 1. Envie este repositório para o GitHub e confirme que a branch a publicar contém `Dockerfile` e `render.yaml`.
 2. Crie ou entre na sua conta em [dashboard.render.com](https://dashboard.render.com), escolha **New → Blueprint**, conecte o GitHub e selecione o repositório/branch.
-3. Revise e confirme o Blueprint `render.yaml`. Ele configura o serviço gratuito de teste e gera `APP_SECRET` automaticamente.
+3. Revise e sincronize o Blueprint `render.yaml`. Ele altera o compute para o plano pago, adiciona o disco de 1 GB e gera `APP_SECRET` automaticamente. A alteração pode gerar cobranças mensais.
 4. No painel do serviço, abra **Environment → Edit** e configure o remetente do Brevo. O Blueprint deixa o segredo para preenchimento privado e oferece estas variáveis:
 
    | Variável | Valor |
@@ -52,7 +58,7 @@ Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **
    | `APP_ENV` | `production` |
    | `APP_SECRET` | chave aleatória privada com pelo menos 32 caracteres |
    | `COOKIE_SECURE` | `true` |
-   | `AUTONOME_DB_PATH` | `/data/autonome.sqlite3` |
+   | `AUTONOME_DB_PATH` | `/app/data/autonome.sqlite3` |
    | `BREVO_API_KEY` | chave API criada no painel do Brevo (secreta) |
    | `EMAIL_FROM` | endereço verificado na área de remetentes do Brevo |
    | `EMAIL_FROM_NAME` | nome apresentado ao destinatário (opcional; padrão `AutonoMe`) |
@@ -61,10 +67,10 @@ Os arquivos `Dockerfile` e `render.yaml` configuram um serviço gratuito para **
 
    As variáveis SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` e `SMTP_FROM`) são opcionais e servem como alternativa em hospedagens que permitem conexões SMTP de saída. O plano Free do Render bloqueia SMTP.
 
-5. Gere um domínio público HTTPS em **Settings → Networking → Generate Domain**. Espere o deploy ficar saudável, abra esse endereço no celular e teste o envio de código por e-mail.
+5. Gere um domínio público HTTPS em **Settings → Networking → Generate Domain**. Espere o deploy ficar saudável, abra esse endereço no celular e teste o envio de código por e-mail. Acompanhe o status do serviço e confirme que o disco está montado em `/app/data`.
 6. Gere o APK com o endereço HTTPS do domínio Render usando o comando da seção anterior. O app e o backend ficam no mesmo domínio, necessário para que o cookie de sessão funcione corretamente.
 
-O serviço gratuito pode ficar temporariamente indisponível ao acordar e não preserva os dados locais entre reinicializações. Nunca envie `APP_SECRET`, chave do Brevo, senha SMTP ou códigos de verificação pelo chat; `APP_SECRET` é gerado pelo Render e os segredos devem ser preenchidos apenas no painel **Environment** do serviço. O APK atual não ganha conectividade retroativamente: é necessário gerar e instalar outro APK depois de ter o domínio publicado.
+Nunca envie `APP_SECRET`, chave do Brevo, senha SMTP ou códigos de verificação pelo chat; `APP_SECRET` é gerado pelo Render e os segredos devem ser preenchidos apenas no painel **Environment** do serviço. O APK atual não ganha conectividade retroativamente: é necessário gerar e instalar outro APK depois de ter o domínio publicado.
 
 ### Configurar envio com Gmail em hospedagem compatível com SMTP
 
@@ -80,7 +86,7 @@ O envio por `smtp.gmail.com:587` **não funciona no plano Free do Render**, mesm
 - Edição de nome, apresentação, localização e foto de perfil; fotos são redimensionadas e comprimidas no dispositivo antes do envio
 - Cadastro com máscara automática de CPF e celular, validação dos dígitos verificadores e do formato de celular brasileiro
 - Confirmação de cadastro e desativação por código aleatório de seis caracteres enviado por e-mail; contas desativadas são movidas da tabela `users` para `disabled_users`
-- Sessões autenticadas por cookie HttpOnly e senha protegida com PBKDF2; as configurações de SMTP e hospedagem são fornecidas pelo operador
+- Sessões autenticadas por cookie HttpOnly de 30 dias e senha protegida com PBKDF2; sair do app encerra apenas a sessão, enquanto desativar a conta exige confirmação por e-mail
 - Ao tocar em uma profissão, abre-se uma tela dedicada com os profissionais correspondentes, busca e navegação de retorno
 - Cadastro de horários semanais por profissional; o contratante só pode solicitar os horários publicados e ainda livres
 - Escolha de data e horário, endereço opcional do atendimento, mensagem ao profissional, acompanhamento dos pedidos e cancelamento de contratações
@@ -92,4 +98,4 @@ O envio por `smtp.gmail.com:587` **não funciona no plano Free do Render**, mesm
 - Identidade visual e ícones PWA/Android atualizados com o logo enviado
 - Favoritos, configurações, avaliação e formulários de contato e ajuda
 
-Perfis, fotos, anúncios, pedidos, mensagens, disponibilidade, favoritos, notificações e anotações ficam no banco SQLite do backend; preferências de aparência e permissões continuam locais ao dispositivo. O chat e as anotações só estão disponíveis às duas contas relacionadas a uma contratação; as anotações de cada pessoa são privadas. Mensagens diretas fora de contratações e compartilhamento público de telefone/e-mail não estão disponíveis. Em hospedagem com disco efêmero, dados podem ser perdidos ao reiniciar ou publicar uma nova versão — use armazenamento persistente antes de confiar dados reais ao serviço. A validação do CPF verifica formato e dígitos, mas não consulta situação cadastral na Receita Federal. O CPF não é armazenado. Não há perfis fictícios no catálogo. A versão web pode ser instalada como PWA pelo menu do navegador; o projeto também gera um APK Android de teste com WebView, ainda não publicado na Google Play.
+Perfis, fotos, anúncios, pedidos, mensagens, disponibilidade, favoritos, notificações e anotações ficam no banco SQLite do backend; preferências de aparência e permissões continuam locais ao dispositivo. No Render, configure e ative o disco persistente descrito acima antes de usar contas reais; SQLite em armazenamento efêmero perde os dados quando o serviço Free dorme ou reinicia. O chat e as anotações só estão disponíveis às duas contas relacionadas a uma contratação; as anotações de cada pessoa são privadas. Mensagens diretas fora de contratações e compartilhamento público de telefone/e-mail não estão disponíveis. A validação do CPF verifica formato e dígitos, mas não consulta situação cadastral na Receita Federal. O CPF não é armazenado. Não há perfis fictícios no catálogo. A versão web pode ser instalada como PWA pelo menu do navegador; o projeto também gera APKs Android de teste com WebView, ainda não publicado na Google Play.

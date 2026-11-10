@@ -2,8 +2,12 @@ services:
   - type: web
     name: autonome
     runtime: docker
-    plan: free
+    plan: 0.5c-512mb
     healthCheckPath: /
+    disk:
+      name: autonome-data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: APP_SECRET
         generateValue: true
@@ -11,6 +15,8 @@ services:
         value: production
       - key: COOKIE_SECURE
         value: "true"
+      - key: AUTONOME_DB_PATH
+        value: /app/data/autonome.sqlite3
       - key: BREVO_API_KEY
         sync: false
       - key: EMAIL_FROM
