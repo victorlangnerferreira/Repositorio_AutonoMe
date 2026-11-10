@@ -43,6 +43,7 @@ const state = {
   editingListingId: "",
   providerAvailability: [],
   availabilitySavePending: false,
+  availabilitySaveStatus: "",
   availableTimes: [],
   availabilityConfigured: false,
   availabilityLoading: false,
@@ -274,6 +275,13 @@ async function apiRequest(path, options = {}) {
   return result;
 }
 
+function availabilityMatches(left, right) {
+  const normalize = (slots) => slots
+    .map((slot) => `${Number(slot.weekday)}|${String(slot.time)}`)
+    .sort();
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
 function setAuthenticatedUser(user) {
   if (state.userId !== user.id) {
     state.ownListings = [];
@@ -474,7 +482,7 @@ function drawer() {
       <button class="drawer-link" data-action="${state.userRole === "provider" || state.userRole === "both" ? "my-services" : "offer-service"}"><span>✦</span>${state.userRole === "provider" || state.userRole === "both" ? "Meus serviços" : "Oferecer meus serviços"}</button>
       <button class="drawer-link logout-link" data-action="logout"><span>↪</span>Sair da conta</button>
     </nav>
-    <div class="drawer-footer">AutonoMe · versão 1.8.0</div>
+    <div class="drawer-footer">AutonoMe · versão 1.9.0</div>
   </aside>`;
 }
 
@@ -586,7 +594,7 @@ function myServicesScreen() {
     <div class="section-heading"><div><h2>Serviços publicados</h2><p>${state.ownListings.length} ${state.ownListings.length === 1 ? "anúncio" : "anúncios"}</p></div>${button("Adicionar serviço", "offer-service", { small: true })}</div>
     <div class="listing-list">${state.ownListings.length ? state.ownListings.map((listing) => `<article class="listing-card">${avatar(listing.initials, false, listing.profilePhoto)}<div><h3>${esc(listing.service)}</h3><p>${esc(listing.category)} · ${esc(listing.location)}</p><div class="inline-meta"><span>${esc(listing.price)}</span></div></div><span class="listing-actions"><button class="button secondary small" data-action="edit-listing" data-listing="${esc(listing.id)}">Editar</button><button class="button danger small" data-action="delete-listing" data-listing="${esc(listing.id)}">Excluir</button></span></article>`).join("") : `<section class="card empty-state"><div class="empty-icon">✦</div><h2>Você ainda não publicou serviços</h2><p>Cadastre seu primeiro serviço para aparecer para clientes da sua região.</p>${button("Cadastrar serviço", "offer-service")}</section>`}</div>
     <section class="card profile-block availability-card"><h2>Horários de atendimento</h2><p>Os clientes só verão os horários que você disponibilizar.</p>
-      <form class="availability-form" data-form="availability">${availabilitySchedule}<button class="button" type="submit"${state.availabilitySavePending ? " disabled" : ""}>${state.availabilitySavePending ? "Salvando..." : "Salvar disponibilidade"}</button></form>
+      <form class="availability-form" data-form="availability">${availabilitySchedule}<p class="availability-save-status ${state.availabilitySaveStatus.startsWith("Erro:") ? "error" : ""}" role="status">${esc(state.availabilitySaveStatus)}</p><button class="button" type="submit"${state.availabilitySavePending ? " disabled" : ""}>${state.availabilitySavePending ? "Salvando..." : state.availabilitySaveStatus.startsWith("Erro:") ? "Tentar salvar novamente" : "Salvar disponibilidade"}</button></form>
     </section>`;
 }
 
@@ -696,7 +704,7 @@ function settingsScreen() {
     <section class="card profile-block"><h3>Como você quer usar o app?</h3><p>Você pode alterar esse perfil quando quiser.</p>${roleOptions(state.userRole)}</section>
     <section class="card profile-block"><h3>Preferências</h3>${Object.entries(state.settings).map(([name, enabled]) => `<div class="switch-row"><div class="switch-copy"><strong>${esc(name)}</strong><span>${name === "Modo Escuro" ? "Ajuste a aparência do aplicativo." : name === "Notificações" ? "Receba novidades sobre seus serviços." : `Controle o acesso do app a ${name.replace("Permitir ", "").toLowerCase()}.`}</span></div><button class="switch" type="button" role="switch" aria-checked="${enabled}" aria-label="${esc(name)}" data-action="toggle-setting" data-setting="${esc(name)}"></button></div>`).join("")}</section>
     <section class="card profile-block danger-zone"><h3>Desativar conta</h3><p>Sua conta será movida para a lista segura de usuários desativados. Você precisará confirmar a ação com um código enviado ao e-mail cadastrado.</p>${button("Solicitar desativação", "delete-account", { variant: "danger" })}</section>
-    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.8.0</p></section>`;
+    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.9.0</p></section>`;
 }
 
 function favoritesScreen() {
@@ -998,7 +1006,16 @@ app.addEventListener("click", async (event) => {
       state.offerCategory = state.ownListings[0]?.category || categories[0].name;
       state.drawerOpen = false;
       break;
-    case "my-services": state.view = "my-services"; state.drawerOpen = false; break;
+    case "my-services":
+      try {
+        await refreshRemoteData();
+        state.availabilitySaveStatus = "";
+      } catch (error) {
+        showToast(error.message);
+      }
+      state.view = "my-services";
+      state.drawerOpen = false;
+      break;
     case "edit-profile":
       state.view = "edit-profile";
       break;
@@ -1321,6 +1338,12 @@ app.addEventListener("click", async (event) => {
       if (dayCountLabel) dayCountLabel.textContent = selectedDayCount
         ? `${selectedDayCount} ${selectedDayCount === 1 ? "horário" : "horários"}`
         : "Sem horários";
+      state.availabilitySaveStatus = "Alterações ainda não salvas.";
+      const saveStatus = document.querySelector(".availability-save-status");
+      if (saveStatus) {
+        saveStatus.textContent = state.availabilitySaveStatus;
+        saveStatus.classList.remove("error");
+      }
       return;
     }
     case "settings":
@@ -1511,23 +1534,43 @@ app.addEventListener("submit", async (event) => {
     }
     case "availability": {
       state.availabilitySavePending = true;
+      state.availabilitySaveStatus = "Salvando...";
       const saveButton = form.querySelector('button[type="submit"]');
+      const timeButtons = form.querySelectorAll(".availability-slot");
+      timeButtons.forEach((button) => { button.disabled = true; });
       if (saveButton) {
         saveButton.disabled = true;
         saveButton.textContent = "Salvando...";
       }
+      const saveStatus = form.querySelector(".availability-save-status");
+      if (saveStatus) {
+        saveStatus.textContent = state.availabilitySaveStatus;
+        saveStatus.classList.remove("error");
+      }
       try {
+        const selectedAvailability = state.providerAvailability.map((slot) => ({ weekday: slot.weekday, time: slot.time }));
         const result = await apiRequest("/api/availability", {
           method: "POST",
-          body: JSON.stringify({ availability: state.providerAvailability }),
+          body: JSON.stringify({ availability: selectedAvailability }),
         });
-        state.providerAvailability = result.availability;
+        const verified = await apiRequest("/api/availability", { method: "GET", headers: {} });
+        if (!availabilityMatches(selectedAvailability, result.availability) || !availabilityMatches(selectedAvailability, verified.availability)) {
+          throw new Error("Os horários foram enviados, mas o servidor não confirmou a gravação. Tente novamente.");
+        }
+        state.providerAvailability = verified.availability;
+        state.availabilitySaveStatus = "Salvo e confirmado no servidor.";
         showToast("Sua disponibilidade foi atualizada.");
       } catch (error) {
         state.availabilitySavePending = false;
+        state.availabilitySaveStatus = `Erro: ${error.message}`;
+        timeButtons.forEach((button) => { button.disabled = false; });
         if (saveButton) {
           saveButton.disabled = false;
           saveButton.textContent = "Tentar salvar novamente";
+        }
+        if (saveStatus) {
+          saveStatus.textContent = state.availabilitySaveStatus;
+          saveStatus.classList.add("error");
         }
         showToast(error.message);
         return;
