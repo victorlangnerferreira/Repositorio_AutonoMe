@@ -629,6 +629,19 @@ class AccountAPITests(unittest.TestCase):
         self.cookie = customer_cookie
         self.assertEqual(self.request("GET", "/api/availability")[1]["availability"], [])
 
+    def test_availability_accepts_and_persists_every_slot_in_the_weekly_grid(self):
+        self.register_account("agenda@example.com", "Agenda", "provider")
+        slots = [
+            {"weekday": weekday, "time": f"{hour:02d}:00"}
+            for weekday in range(7)
+            for hour in range(6, 23)
+        ]
+
+        status, response = self.request("POST", "/api/availability", {"availability": slots})
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["availability"], slots)
+        self.assertEqual(self.request("GET", "/api/availability")[1]["availability"], slots)
+
     def test_contract_notes_are_private_to_the_author_and_only_available_to_participants(self):
         self.register_account("profissional@example.com", "Profissional", "both")
         worker_cookie = self.cookie

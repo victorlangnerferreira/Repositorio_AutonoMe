@@ -160,17 +160,24 @@ h3 { margin-bottom: 6px; font-size: 16px; }
 .time-option:hover { border-color: var(--brand); }
 .time-option.selected { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-dark); font-weight: 700; }
 .booking-summary { margin: 18px 0; padding: 14px; border-radius: 14px; background: var(--surface-soft); color: #53645b; font-size: 13px; }
-.availability-card > p { margin-bottom: 14px; color: var(--muted); }
+.availability-card { overflow: hidden; }
+.availability-card > h2 { margin-bottom: 7px; }
+.availability-card > p { margin-bottom: 14px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .availability-form { margin-top: 16px; display: grid; gap: 14px; }
-.availability-schedule { overflow: hidden; border: 1px solid var(--line); border-radius: 15px; }
-.availability-schedule-head, .availability-day-row { display: grid; grid-template-columns: minmax(110px, .7fr) minmax(0, 2fr); gap: 12px; align-items: start; padding: 12px; }
-.availability-schedule-head { background: var(--surface-soft); color: var(--muted); font-size: 11px; }
+.availability-schedule { overflow: hidden; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
+.availability-schedule-head { min-height: 66px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: linear-gradient(110deg, #edf5f1, #f8faf8); color: var(--ink); }
+.availability-schedule-head > span:first-child { display: grid; gap: 4px; }
+.availability-schedule-head strong { font-size: 13px; }
+.availability-schedule-head > span:first-child > span { color: var(--muted); font-size: 11px; }
+.availability-total { padding: 7px 10px; border-radius: 999px; background: #fff; color: var(--brand-dark); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.availability-day-row { padding: 13px 15px; display: grid; grid-template-columns: minmax(112px, .65fr) minmax(0, 2fr); gap: 14px; align-items: start; }
 .availability-day-row + .availability-day-row { border-top: 1px solid var(--line); }
-.availability-day-name { padding-top: 8px; font-size: 12px; }
-.availability-slot-grid { display: grid; grid-template-columns: repeat(4, minmax(54px, 1fr)); gap: 6px; }
-.availability-slot { min-height: 34px; padding: 0 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--muted); font-size: 11px; }
-.availability-slot:hover { border-color: var(--brand); }
-.availability-slot.selected { border-color: var(--brand); background: var(--brand); color: #fff; font-weight: 700; }
+.availability-day-name { padding-top: 7px; font-size: 12px; }
+.availability-day-name span { margin-top: 4px; display: block; color: var(--muted); font-size: 10px; font-weight: 500; }
+.availability-slot-grid { display: grid; grid-template-columns: repeat(4, minmax(54px, 1fr)); gap: 7px; }
+.availability-slot { min-height: 37px; padding: 0 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 11px; transition: background .15s, border-color .15s, color .15s, transform .15s; }
+.availability-slot:hover { transform: translateY(-1px); border-color: #80ae9e; color: var(--brand-dark); }
+.availability-slot.selected { border-color: var(--brand); background: var(--brand); color: #fff; font-weight: 700; box-shadow: 0 2px 6px rgba(40,108,93,.2); }
 .availability-form > .button { width: 100%; }
 .note-list { margin: 14px 0; display: grid; gap: 8px; }
 .contract-note { margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--surface-soft); color: var(--ink) !important; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -353,8 +360,8 @@ body.dark .profile-hero .avatar { background: #344d40; }
   .provider-cta { padding: 14px; }
   .support-option { min-height: 88px; flex-direction: row; align-items: center; }
   .two-col { grid-template-columns: 1fr; }
-  .availability-schedule-head, .availability-day-row { grid-template-columns: 1fr; gap: 8px; }
-  .availability-schedule-head strong:last-child { display: none; }
+  .availability-schedule-head { align-items: flex-start; flex-direction: column; gap: 9px; }
+  .availability-day-row { grid-template-columns: 1fr; gap: 8px; }
   .availability-slot-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .section-heading { align-items: flex-start; }
   .tab { padding: 0 10px; }

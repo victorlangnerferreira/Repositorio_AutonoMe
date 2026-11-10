@@ -850,8 +850,8 @@ class AutonoMeHandler(SimpleHTTPRequestHandler):
 
     def save_availability(self, payload):
         slots = payload.get("availability")
-        if not isinstance(slots, list) or len(slots) > 84:
-            raise APIError(HTTPStatus.BAD_REQUEST, "Informe até 84 horários de atendimento.")
+        if not isinstance(slots, list) or len(slots) > 119:
+            raise APIError(HTTPStatus.BAD_REQUEST, "Informe até 119 horários de atendimento.")
         validated = set()
         for slot in slots:
             if not isinstance(slot, dict):

@@ -42,6 +42,7 @@ const state = {
   ownListings: [],
   editingListingId: "",
   providerAvailability: [],
+  availabilitySavePending: false,
   availableTimes: [],
   availabilityConfigured: false,
   availabilityLoading: false,
@@ -473,7 +474,7 @@ function drawer() {
       <button class="drawer-link" data-action="${state.userRole === "provider" || state.userRole === "both" ? "my-services" : "offer-service"}"><span>✦</span>${state.userRole === "provider" || state.userRole === "both" ? "Meus serviços" : "Oferecer meus serviços"}</button>
       <button class="drawer-link logout-link" data-action="logout"><span>↪</span>Sair da conta</button>
     </nav>
-    <div class="drawer-footer">AutonoMe · versão 1.7.0</div>
+    <div class="drawer-footer">AutonoMe · versão 1.8.0</div>
   </aside>`;
 }
 
@@ -572,19 +573,20 @@ function providerSetupScreen() {
 }
 
 function myServicesScreen() {
-  const availabilitySchedule = `<div class="availability-schedule"><div class="availability-schedule-head"><strong>Dia</strong><strong>Toque nos horários para selecionar</strong></div>${weekdayNames.map((day, weekday) => {
+  const selectedSlotCount = state.providerAvailability.length;
+  const availabilitySchedule = `<div class="availability-schedule"><div class="availability-schedule-head"><span><strong>Escolha seus horários</strong><span>Toque para marcar ou desmarcar</span></span><span class="availability-total">${selectedSlotCount} ${selectedSlotCount === 1 ? "horário selecionado" : "horários selecionados"}</span></div>${weekdayNames.map((day, weekday) => {
     const savedTimes = state.providerAvailability.filter((slot) => slot.weekday === weekday).map((slot) => slot.time);
     const times = [...new Set([...availabilityTimes, ...savedTimes])].sort();
-    return `<div class="availability-day-row"><strong class="availability-day-name">${day}</strong><div class="availability-slot-grid">${times.map((time) => {
+    return `<section class="availability-day-row"><strong class="availability-day-name">${day}<span>${savedTimes.length ? `${savedTimes.length} ${savedTimes.length === 1 ? "horário" : "horários"}` : "Sem horários"}</span></strong><div class="availability-slot-grid">${times.map((time) => {
       const selected = savedTimes.includes(time);
       return `<button class="availability-slot ${selected ? "selected" : ""}" type="button" data-action="toggle-availability-time" data-weekday="${weekday}" data-time="${esc(time)}" aria-pressed="${selected}">${esc(time)}</button>`;
-    }).join("")}</div></div>`;
+    }).join("")}</div></section>`;
   }).join("")}</div>`;
   return `<p class="eyebrow">Seu trabalho, sua vitrine</p><h1>Meus serviços</h1><p class="lead">Gerencie os anúncios que os clientes podem encontrar.</p>
     <div class="section-heading"><div><h2>Serviços publicados</h2><p>${state.ownListings.length} ${state.ownListings.length === 1 ? "anúncio" : "anúncios"}</p></div>${button("Adicionar serviço", "offer-service", { small: true })}</div>
     <div class="listing-list">${state.ownListings.length ? state.ownListings.map((listing) => `<article class="listing-card">${avatar(listing.initials, false, listing.profilePhoto)}<div><h3>${esc(listing.service)}</h3><p>${esc(listing.category)} · ${esc(listing.location)}</p><div class="inline-meta"><span>${esc(listing.price)}</span></div></div><span class="listing-actions"><button class="button secondary small" data-action="edit-listing" data-listing="${esc(listing.id)}">Editar</button><button class="button danger small" data-action="delete-listing" data-listing="${esc(listing.id)}">Excluir</button></span></article>`).join("") : `<section class="card empty-state"><div class="empty-icon">✦</div><h2>Você ainda não publicou serviços</h2><p>Cadastre seu primeiro serviço para aparecer para clientes da sua região.</p>${button("Cadastrar serviço", "offer-service")}</section>`}</div>
     <section class="card profile-block availability-card"><h2>Horários de atendimento</h2><p>Os clientes só verão os horários que você disponibilizar.</p>
-      <form class="availability-form" data-form="availability">${availabilitySchedule}<button class="button" type="submit">Salvar disponibilidade</button></form>
+      <form class="availability-form" data-form="availability">${availabilitySchedule}<button class="button" type="submit"${state.availabilitySavePending ? " disabled" : ""}>${state.availabilitySavePending ? "Salvando..." : "Salvar disponibilidade"}</button></form>
     </section>`;
 }
 
@@ -694,7 +696,7 @@ function settingsScreen() {
     <section class="card profile-block"><h3>Como você quer usar o app?</h3><p>Você pode alterar esse perfil quando quiser.</p>${roleOptions(state.userRole)}</section>
     <section class="card profile-block"><h3>Preferências</h3>${Object.entries(state.settings).map(([name, enabled]) => `<div class="switch-row"><div class="switch-copy"><strong>${esc(name)}</strong><span>${name === "Modo Escuro" ? "Ajuste a aparência do aplicativo." : name === "Notificações" ? "Receba novidades sobre seus serviços." : `Controle o acesso do app a ${name.replace("Permitir ", "").toLowerCase()}.`}</span></div><button class="switch" type="button" role="switch" aria-checked="${enabled}" aria-label="${esc(name)}" data-action="toggle-setting" data-setting="${esc(name)}"></button></div>`).join("")}</section>
     <section class="card profile-block danger-zone"><h3>Desativar conta</h3><p>Sua conta será movida para a lista segura de usuários desativados. Você precisará confirmar a ação com um código enviado ao e-mail cadastrado.</p>${button("Solicitar desativação", "delete-account", { variant: "danger" })}</section>
-    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.7.0</p></section>`;
+    <section class="card profile-block"><h3>Sobre o app</h3><p>AutonoMe · versão 1.8.0</p></section>`;
 }
 
 function favoritesScreen() {
@@ -1311,6 +1313,14 @@ app.addEventListener("click", async (event) => {
         target.classList.add("selected");
         target.setAttribute("aria-pressed", "true");
       }
+      const selectedCount = state.providerAvailability.length;
+      const countLabel = document.querySelector(".availability-total");
+      if (countLabel) countLabel.textContent = `${selectedCount} ${selectedCount === 1 ? "horário selecionado" : "horários selecionados"}`;
+      const dayCountLabel = target.closest(".availability-day-row")?.querySelector(".availability-day-name span");
+      const selectedDayCount = state.providerAvailability.filter((slot) => slot.weekday === weekday).length;
+      if (dayCountLabel) dayCountLabel.textContent = selectedDayCount
+        ? `${selectedDayCount} ${selectedDayCount === 1 ? "horário" : "horários"}`
+        : "Sem horários";
       return;
     }
     case "settings":
@@ -1500,6 +1510,12 @@ app.addEventListener("submit", async (event) => {
       break;
     }
     case "availability": {
+      state.availabilitySavePending = true;
+      const saveButton = form.querySelector('button[type="submit"]');
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "Salvando...";
+      }
       try {
         const result = await apiRequest("/api/availability", {
           method: "POST",
@@ -1508,9 +1524,15 @@ app.addEventListener("submit", async (event) => {
         state.providerAvailability = result.availability;
         showToast("Sua disponibilidade foi atualizada.");
       } catch (error) {
+        state.availabilitySavePending = false;
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = "Tentar salvar novamente";
+        }
         showToast(error.message);
         return;
       }
+      state.availabilitySavePending = false;
       break;
     }
     case "contract-note": {
